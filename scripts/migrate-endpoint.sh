@@ -5,7 +5,7 @@
 # Use this script when migrating ANY customer SQL Server to ANY PostgreSQL.
 # Uses pgloader for the bulk transfer.
 #
-# For the WideWorldImporters local demo (Docker), use migrate-data.sh instead.
+# For the WideWorldImporters local demo (podman), use migrate-data.sh instead.
 #
 # Connection strings come from .env. Required:
 #   SQLSERVER_HOST, SQLSERVER_PORT, SQLSERVER_DB, SQLSERVER_USER, SQLSERVER_PASSWORD
@@ -91,7 +91,7 @@ ERROR: pgloader not found.
 Install:
   Ubuntu/Debian:  sudo apt-get install -y pgloader
   macOS (brew):   brew install pgloader
-  Docker:         alias pgloader='docker run --rm -i dimitri/pgloader pgloader'
+  podman:         alias pgloader='podman run --rm -i dimitri/pgloader pgloader'
   Docs:           https://pgloader.io
 EOF
     exit 127

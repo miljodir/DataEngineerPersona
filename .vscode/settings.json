@@ -5,17 +5,7 @@
     "**/node_modules": true
   },
   "sqlfluff.dialect": "postgres",
-  "mssql.connections": [
-    {
-      "server": "localhost,1433",
-      "database": "WideWorldImporters",
-      "authenticationType": "SqlLogin",
-      "user": "sa",
-      "password": "",
-      "savePassword": false,
-      "profileName": "WWI-Local-Docker"
-    }
-  ],
+  "mssql.connections": [],
   "files.associations": {
     "*.sql": "sql",
     "*.pgsql": "sql"

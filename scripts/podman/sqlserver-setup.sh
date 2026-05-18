@@ -14,7 +14,7 @@ echo "=== WideWorldImporters Setup ==="
 # Wait for SQL Server to be ready
 echo "[1/3] Waiting for SQL Server..."
 for i in $(seq 1 30); do
-    if /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -Q "SELECT 1" -b > /dev/null 2>&1; then
+    if /opt/mssql-tools18/bin/sqlcmd -S 127.0.0.1 -U sa -P "$SA_PASSWORD" -C -Q "SELECT 1" -b > /dev/null 2>&1; then
         echo "  SQL Server is ready."
         break
     fi
@@ -37,13 +37,13 @@ else
 fi
 
 # Check if database already exists
-DB_EXISTS=$(/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM sys.databases WHERE name = 'WideWorldImporters'" -h -1 -b 2>/dev/null | tr -d '[:space:]')
+DB_EXISTS=$(/opt/mssql-tools18/bin/sqlcmd -S 127.0.0.1 -U sa -P "$SA_PASSWORD" -C -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM sys.databases WHERE name = 'WideWorldImporters'" -h -1 -b 2>/dev/null | tr -d '[:space:]')
 
 if [ "$DB_EXISTS" = "1" ]; then
     echo "[3/3] WideWorldImporters database already exists. Skipping restore."
 else
     echo "[3/3] Restoring WideWorldImporters database..."
-    /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -Q "
+    /opt/mssql-tools18/bin/sqlcmd -S 127.0.0.1 -U sa -P "$SA_PASSWORD" -C -Q "
         RESTORE DATABASE WideWorldImporters
         FROM DISK = '$BAK_PATH'
         WITH MOVE 'WWI_Primary' TO '/var/opt/mssql/data/WideWorldImporters.mdf',
@@ -58,7 +58,7 @@ fi
 # Verify
 echo ""
 echo "=== Verification ==="
-/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -Q "
+/opt/mssql-tools18/bin/sqlcmd -S 127.0.0.1 -U sa -P "$SA_PASSWORD" -C -Q "
     USE WideWorldImporters;
     SELECT 'Tables: ' + CAST(COUNT(*) AS VARCHAR) FROM sys.tables;
     SELECT 'Schemas: ' + STRING_AGG(name, ', ') FROM sys.schemas WHERE name IN ('Application','Purchasing','Sales','Warehouse','Website','Integration','Sequences');

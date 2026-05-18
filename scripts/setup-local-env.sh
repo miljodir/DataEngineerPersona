@@ -60,7 +60,7 @@ echo "[4/6] Waiting for SQL Server to be ready..."
 MAX_ATTEMPTS=30
 for i in $(seq 1 $MAX_ATTEMPTS); do
     if podman exec wwi-sqlserver /opt/mssql-tools18/bin/sqlcmd \
-        -S localhost -U sa -P "$SA_PASSWORD" -C -Q "SELECT 1" -b &>/dev/null; then
+        -S 127.0.0.1 -U sa -P "$SA_PASSWORD" -C -Q "SELECT 1" -b &>/dev/null; then
         echo "  SQL Server is ready."
         break
     fi
@@ -89,7 +89,7 @@ fi
 
 # Check if database already exists
 DB_EXISTS=$(podman exec wwi-sqlserver /opt/mssql-tools18/bin/sqlcmd \
-    -S localhost -U sa -P "$SA_PASSWORD" -C \
+    -S 127.0.0.1 -U sa -P "$SA_PASSWORD" -C \
     -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM sys.databases WHERE name = 'WideWorldImporters'" \
     -h -1 -b 2>/dev/null | tr -d '[:space:]')
 
@@ -98,7 +98,7 @@ if [ "$DB_EXISTS" = "1" ]; then
 else
     echo "  Restoring WideWorldImporters database..."
     podman exec wwi-sqlserver /opt/mssql-tools18/bin/sqlcmd \
-        -S localhost -U sa -P "$SA_PASSWORD" -C -Q "
+        -S 127.0.0.1 -U sa -P "$SA_PASSWORD" -C -Q "
         RESTORE DATABASE WideWorldImporters
         FROM DISK = '/backup/WideWorldImporters-Full.bak'
         WITH MOVE 'WWI_Primary' TO '/var/opt/mssql/data/WideWorldImporters.mdf',
@@ -142,8 +142,8 @@ echo "============================================="
 echo "  Local Environment Ready!"
 echo "============================================="
 echo ""
-echo "  SQL Server:  localhost,1433  |  sa / $SA_PASSWORD  |  DB: WideWorldImporters"
-echo "  PostgreSQL:  localhost:5432  |  wwi_user / $PG_PASSWORD  |  DB: wide_world_importers"
+echo "  SQL Server:  127.0.0.1,1433  |  sa / $SA_PASSWORD  |  DB: WideWorldImporters"
+echo "  PostgreSQL:  127.0.0.1:5432  |  wwi_user / $PG_PASSWORD  |  DB: wide_world_importers"
 echo ""
 echo "  Next steps:"
 echo "    1. Connect to SQL Server via MSSQL extension"

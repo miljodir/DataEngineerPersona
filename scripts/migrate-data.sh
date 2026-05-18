@@ -28,7 +28,7 @@ PG_DB="${PG_DB:-wide_world_importers}"
 # Helpers
 sqlcmd_exec() {
     podman exec wwi-sqlserver /opt/mssql-tools18/bin/sqlcmd \
-        -S localhost -U sa -P "$SA_PASSWORD" -C -d WideWorldImporters \
+        -S 127.0.0.1 -U sa -P "$SA_PASSWORD" -C -d WideWorldImporters \
         -W -h -1 "$@"
 }
 
@@ -48,7 +48,7 @@ echo ""
 echo "[1/5] Checking containers..."
 
 if ! podman exec wwi-sqlserver /opt/mssql-tools18/bin/sqlcmd \
-    -S localhost -U sa -P "$SA_PASSWORD" -C -Q "SELECT 1" -b &>/dev/null; then
+    -S 127.0.0.1 -U sa -P "$SA_PASSWORD" -C -Q "SELECT 1" -b &>/dev/null; then
     echo "  ERROR: SQL Server is not reachable. Run setup-local-env first."
     exit 1
 fi
@@ -132,7 +132,7 @@ for i in "${!TABLES[@]}"; do
 
     # Export: sqlcmd SELECT → tab-delimited file in shared volume
     if podman exec wwi-sqlserver /opt/mssql-tools18/bin/sqlcmd \
-        -S localhost -U sa -P "$SA_PASSWORD" -C -d WideWorldImporters \
+        -S 127.0.0.1 -U sa -P "$SA_PASSWORD" -C -d WideWorldImporters \
         -W -s"	" -h -1 -Q \
         "SET NOCOUNT ON; SELECT $COLUMNS FROM [$MS_SCHEMA].[$MS_TABLE]" \
         > "$EXPORT_DIR/${MS_SCHEMA}_${MS_TABLE}.csv" 2>/dev/null; then

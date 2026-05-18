@@ -100,8 +100,8 @@ Successful output ends with:
 
 | Service                 | Host        | Port | User       | Password                         | Database               |
 | ----------------------- | ----------- | ---- | ---------- | -------------------------------- | ---------------------- |
-| SQL Server 2022         | `localhost` | 1433 | `sa`       | see [.env.example](.env.example) | `WideWorldImporters`   |
-| PostgreSQL 16 (PostGIS) | `localhost` | 5432 | `wwi_user` | see [.env.example](.env.example) | `wide_world_importers` |
+| SQL Server 2022         | `127.0.0.1` | 1433 | `sa`       | see [.env.example](.env.example) | `WideWorldImporters`   |
+| PostgreSQL 16 (PostGIS) | `127.0.0.1` | 5432 | `wwi_user` | see [.env.example](.env.example) | `wide_world_importers` |
 
 ```bash
 docker compose down       # stop containers (data persists)

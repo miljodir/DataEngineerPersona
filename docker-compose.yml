@@ -1,6 +1,6 @@
 services:
   sqlserver:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    image: mcr.microsoft.com/mssql/server:2025-latest
     container_name: wwi-sqlserver
     environment:
       ACCEPT_EULA: "Y"
@@ -19,7 +19,7 @@ services:
       start_period: 30s
 
   postgres:
-    image: docker.io/postgis/postgis:16-3.4
+    image: docker.io/postgis/postgis:18-3.6
     container_name: wwi-postgres
     environment:
       POSTGRES_DB: wide_world_importers

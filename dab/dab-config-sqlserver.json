@@ -24,7 +24,7 @@
     },
     "host": {
       "cors": {
-        "origins": ["http://localhost:3000"],
+        "origins": ["http://127.0.0.1:3000"],
         "allow-credentials": false
       },
       "authentication": {
@@ -36,37 +36,60 @@
   "entities": {
     "StockItems": {
       "source": { "object": "Warehouse.StockItems", "type": "table" },
-      "graphql": { "enabled": true, "type": { "singular": "StockItem", "plural": "StockItems" } },
+      "graphql": {
+        "enabled": true,
+        "type": { "singular": "StockItem", "plural": "StockItems" }
+      },
       "rest": { "enabled": true },
       "permissions": [{ "role": "anonymous", "actions": [{ "action": "*" }] }],
       "description": "Products in WideWorldImporters warehouse inventory"
     },
     "Suppliers": {
       "source": { "object": "Purchasing.Suppliers", "type": "table" },
-      "graphql": { "enabled": true, "type": { "singular": "Supplier", "plural": "Suppliers" } },
+      "graphql": {
+        "enabled": true,
+        "type": { "singular": "Supplier", "plural": "Suppliers" }
+      },
       "rest": { "enabled": true },
-      "permissions": [{ "role": "anonymous", "actions": [{ "action": "read" }] }],
+      "permissions": [
+        { "role": "anonymous", "actions": [{ "action": "read" }] }
+      ],
       "description": "Supplier organizations providing products"
     },
     "Customers": {
       "source": { "object": "Sales.Customers", "type": "table" },
-      "graphql": { "enabled": true, "type": { "singular": "Customer", "plural": "Customers" } },
+      "graphql": {
+        "enabled": true,
+        "type": { "singular": "Customer", "plural": "Customers" }
+      },
       "rest": { "enabled": true },
-      "permissions": [{ "role": "anonymous", "actions": [{ "action": "read" }] }],
+      "permissions": [
+        { "role": "anonymous", "actions": [{ "action": "read" }] }
+      ],
       "description": "Customer accounts for WideWorldImporters"
     },
     "Orders": {
       "source": { "object": "Sales.Orders", "type": "table" },
-      "graphql": { "enabled": true, "type": { "singular": "Order", "plural": "Orders" } },
+      "graphql": {
+        "enabled": true,
+        "type": { "singular": "Order", "plural": "Orders" }
+      },
       "rest": { "enabled": true },
-      "permissions": [{ "role": "anonymous", "actions": [{ "action": "read" }] }],
+      "permissions": [
+        { "role": "anonymous", "actions": [{ "action": "read" }] }
+      ],
       "description": "Sales orders placed by customers"
     },
     "PurchaseOrders": {
       "source": { "object": "Purchasing.PurchaseOrders", "type": "table" },
-      "graphql": { "enabled": true, "type": { "singular": "PurchaseOrder", "plural": "PurchaseOrders" } },
+      "graphql": {
+        "enabled": true,
+        "type": { "singular": "PurchaseOrder", "plural": "PurchaseOrders" }
+      },
       "rest": { "enabled": true },
-      "permissions": [{ "role": "anonymous", "actions": [{ "action": "read" }] }],
+      "permissions": [
+        { "role": "anonymous", "actions": [{ "action": "read" }] }
+      ],
       "description": "Purchase orders sent to suppliers"
     }
   }

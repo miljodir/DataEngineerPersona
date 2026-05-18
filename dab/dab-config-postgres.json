@@ -22,7 +22,7 @@
     },
     "host": {
       "cors": {
-        "origins": ["http://localhost:3000"],
+        "origins": ["http://127.0.0.1:3000"],
         "allow-credentials": false
       },
       "authentication": {
@@ -34,37 +34,60 @@
   "entities": {
     "StockItems": {
       "source": { "object": "warehouse.stock_items", "type": "table" },
-      "graphql": { "enabled": true, "type": { "singular": "StockItem", "plural": "StockItems" } },
+      "graphql": {
+        "enabled": true,
+        "type": { "singular": "StockItem", "plural": "StockItems" }
+      },
       "rest": { "enabled": true },
       "permissions": [{ "role": "anonymous", "actions": [{ "action": "*" }] }],
       "description": "Products in WideWorldImporters warehouse inventory (migrated to PostgreSQL)"
     },
     "Suppliers": {
       "source": { "object": "purchasing.suppliers", "type": "table" },
-      "graphql": { "enabled": true, "type": { "singular": "Supplier", "plural": "Suppliers" } },
+      "graphql": {
+        "enabled": true,
+        "type": { "singular": "Supplier", "plural": "Suppliers" }
+      },
       "rest": { "enabled": true },
-      "permissions": [{ "role": "anonymous", "actions": [{ "action": "read" }] }],
+      "permissions": [
+        { "role": "anonymous", "actions": [{ "action": "read" }] }
+      ],
       "description": "Supplier organizations (migrated to PostgreSQL)"
     },
     "Customers": {
       "source": { "object": "sales.customers", "type": "table" },
-      "graphql": { "enabled": true, "type": { "singular": "Customer", "plural": "Customers" } },
+      "graphql": {
+        "enabled": true,
+        "type": { "singular": "Customer", "plural": "Customers" }
+      },
       "rest": { "enabled": true },
-      "permissions": [{ "role": "anonymous", "actions": [{ "action": "read" }] }],
+      "permissions": [
+        { "role": "anonymous", "actions": [{ "action": "read" }] }
+      ],
       "description": "Customer accounts (migrated to PostgreSQL)"
     },
     "Orders": {
       "source": { "object": "sales.orders", "type": "table" },
-      "graphql": { "enabled": true, "type": { "singular": "Order", "plural": "Orders" } },
+      "graphql": {
+        "enabled": true,
+        "type": { "singular": "Order", "plural": "Orders" }
+      },
       "rest": { "enabled": true },
-      "permissions": [{ "role": "anonymous", "actions": [{ "action": "read" }] }],
+      "permissions": [
+        { "role": "anonymous", "actions": [{ "action": "read" }] }
+      ],
       "description": "Sales orders (migrated to PostgreSQL)"
     },
     "PurchaseOrders": {
       "source": { "object": "purchasing.purchase_orders", "type": "table" },
-      "graphql": { "enabled": true, "type": { "singular": "PurchaseOrder", "plural": "PurchaseOrders" } },
+      "graphql": {
+        "enabled": true,
+        "type": { "singular": "PurchaseOrder", "plural": "PurchaseOrders" }
+      },
       "rest": { "enabled": true },
-      "permissions": [{ "role": "anonymous", "actions": [{ "action": "read" }] }],
+      "permissions": [
+        { "role": "anonymous", "actions": [{ "action": "read" }] }
+      ],
       "description": "Purchase orders (migrated to PostgreSQL)"
     }
   }

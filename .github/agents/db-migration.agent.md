@@ -30,15 +30,15 @@ The agent supports two execution modes — pick automatically based on inputs.
 - Triggered by: `sourcePath` argument matches `samples/wide-world-importers` (default).
 - Source: `wwi-sqlserver` Docker container, DB `WideWorldImporters`.
 - Target: `wwi-postgres` Docker container, DB `wide_world_importers`.
-- Setup: `bash scripts/setup-local-env.sh`
-- Migrate: `bash scripts/migrate-data.sh`
+- Setup: `wsl zsh -c "scripts/setup-local-env.sh"`
+- Migrate: `wsl zsh -c "scripts/migrate-data.sh"`
 
 ### Mode B — BYO Endpoint (any customer SQL Server → any PostgreSQL)
 
 - Triggered by: connection details exist in `.env` and `sourcePath` is empty or omitted.
 - Source: `${SQLSERVER_HOST}:${SQLSERVER_PORT}/${SQLSERVER_DB}` from `.env`.
 - Target: `${PG_HOST}:${PG_PORT}/${PG_DB}` from `.env`.
-- Migrate: `bash scripts/migrate-endpoint.sh`
+- Migrate: `wsl zsh -c "scripts/migrate-endpoint.sh"`
 - Required env: `SQLSERVER_{HOST,PORT,DB,USER,PASSWORD}`, `PG_{HOST,PORT,DB,USER,PASSWORD}`.
 
 In both modes the assessment, validation, security, and performance steps are identical. Only the data-transfer command differs.

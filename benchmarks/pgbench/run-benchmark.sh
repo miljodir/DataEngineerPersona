@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/zsh
 # pgbench benchmark for PostgreSQL
 # Usage: ./run-benchmark.sh [database] [duration_seconds]
 

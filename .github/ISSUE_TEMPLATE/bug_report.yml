@@ -12,7 +12,7 @@ body:
       label: What happened?
       description: A clear and concise description of the bug.
       placeholder: |
-        When I ran `bash scripts/migrate-data.sh` against my SQL Server, ...
+        When I ran `wsl zsh -c "scripts/migrate-data.sh"` against my SQL Server, ...
     validations:
       required: true
   - type: textarea
@@ -20,8 +20,8 @@ body:
     attributes:
       label: Steps to reproduce
       placeholder: |
-        1. Open the repo in Codespaces (or run `bash scripts/setup-local-env.sh` locally)
-        2. Run `bash scripts/migrate-data.sh`
+        1. Open the repo in Codespaces (or run `wsl zsh -c "scripts/setup-local-env.sh"` locally)
+        2. Run `wsl zsh -c "scripts/migrate-data.sh"`
         3. Observe the error
     validations:
       required: true

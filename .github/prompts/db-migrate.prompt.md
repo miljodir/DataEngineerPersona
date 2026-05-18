@@ -13,9 +13,9 @@ Read the skill file `.github/skills/sql-to-postgres/SKILL.md` first - it is the 
 
 ## Mode Selection
 
-If `sourcePath` is provided and matches a folder under `samples/` → run **Demo mode** against the local Docker WideWorldImporters lab using `bash scripts/migrate-data.sh`.
+If `sourcePath` is provided and matches a folder under `samples/` → run **Demo mode** against the local Docker WideWorldImporters lab using `wsl zsh -c "scripts/migrate-data.sh"`.
 
-If `sourcePath` is empty (just `/db-migrate` with no argument) → run **BYO Endpoint mode** against the SQL Server and PostgreSQL defined in `.env` (`SQLSERVER_*` and `PG_*`) using `bash scripts/migrate-endpoint.sh`.
+If `sourcePath` is empty (just `/db-migrate` with no argument) → run **BYO Endpoint mode** against the SQL Server and PostgreSQL defined in `.env` (`SQLSERVER_*` and `PG_*`) using `wsl zsh -c "scripts/migrate-endpoint.sh"`.
 
 Source path argument: `${input:sourcePath:samples/wide-world-importers}`
 

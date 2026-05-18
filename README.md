@@ -1,22 +1,25 @@
-<!--
----
+## <!--
+
 page_type: sample
 languages:
-  - sql
-  - tsql
-  - plpgsql
-  - bash
-products:
-  - azure
-  - azure-database-postgresql
-  - azure-sql-database
-  - github-copilot
-  - microsoft-fabric
-  - vs-code
-name: SQL Server to PostgreSQL Migration Accelerator
-description: Reusable, one-click migration accelerator from SQL Server to Azure Database for PostgreSQL Flexible Server, orchestrated by a Copilot agent with multi-tool cross-validation.
-urlFragment: sql-to-postgres-migration
+
+- sql
+- tsql
+- plpgsql
+- bash
+  products:
+- azure
+- azure-database-postgresql
+- azure-sql-database
+- github-copilot
+- microsoft-fabric
+- vs-code
+  name: SQL Server to PostgreSQL Migration Accelerator
+  description: Reusable, one-click migration accelerator from SQL Server to Azure Database for PostgreSQL Flexible Server, orchestrated by a Copilot agent with multi-tool cross-validation.
+  urlFragment: sql-to-postgres-migration
+
 ---
+
 -->
 
 # SQL Server to PostgreSQL Migration Accelerator
@@ -54,10 +57,10 @@ flowchart LR
 
 ## Two ways to use it
 
-| Mode | When to use | What you run |
-|---|---|---|
-| **Demo** — WideWorldImporters local Docker | First time, workshops, live demos | `/db-migrate samples/wide-world-importers` (or just click the badge) |
-| **BYO Endpoint** — your own SQL Server → your own PostgreSQL | Real customer migrations | Edit [.env](.env.example) → `/db-migrate` (no argument) |
+| Mode                                                         | When to use                       | What you run                                                         |
+| ------------------------------------------------------------ | --------------------------------- | -------------------------------------------------------------------- |
+| **Demo** — WideWorldImporters local Docker                   | First time, workshops, live demos | `/db-migrate samples/wide-world-importers` (or just click the badge) |
+| **BYO Endpoint** — your own SQL Server → your own PostgreSQL | Real customer migrations          | Edit [.env](.env.example) → `/db-migrate` (no argument)              |
 
 Both modes use the **same agent, same skill, same validation gates** — only the connection strings change.
 
@@ -83,8 +86,8 @@ Open a bash shell in the repo (Codespace, dev container, WSL, macOS, or Linux):
 
 ```bash
 cp .env.example .env                   # defaults are safe for local demo
-bash scripts/setup-local-env.sh        # starts containers + restores WideWorldImporters (~3 min first run)
-bash scripts/migrate-data.sh           # schema + 31 tables + 6 functions + row-count validation
+wsl zsh -c "scripts/setup-local-env.sh"        # starts containers + restores WideWorldImporters (~3 min first run)
+wsl zsh -c "scripts/migrate-data.sh"           # schema + 31 tables + 6 functions + row-count validation
 ```
 
 Successful output ends with:
@@ -95,9 +98,9 @@ Successful output ends with:
   Migration Complete!
 ```
 
-| Service | Host | Port | User | Password | Database |
-|---|---|---|---|---|---|
-| SQL Server 2022 | `localhost` | 1433 | `sa` | see [.env.example](.env.example) | `WideWorldImporters` |
+| Service                 | Host        | Port | User       | Password                         | Database               |
+| ----------------------- | ----------- | ---- | ---------- | -------------------------------- | ---------------------- |
+| SQL Server 2022         | `localhost` | 1433 | `sa`       | see [.env.example](.env.example) | `WideWorldImporters`   |
 | PostgreSQL 16 (PostGIS) | `localhost` | 5432 | `wwi_user` | see [.env.example](.env.example) | `wide_world_importers` |
 
 ```bash
@@ -123,8 +126,8 @@ cp .env.example .env
 #   PG_USER='migrate_user'
 #   PG_PASSWORD='...'
 
-bash scripts/migrate-endpoint.sh --dry-run    # validate connectivity + type mappings
-bash scripts/migrate-endpoint.sh              # perform migration via pgloader
+wsl zsh -c "scripts/migrate-endpoint.sh --dry-run"    # validate connectivity + type mappings
+wsl zsh -c "scripts/migrate-endpoint.sh"              # perform migration via pgloader
 ```
 
 The same Copilot agent works on the customer endpoint:
@@ -171,13 +174,13 @@ flowchart TB
 
 Every critical step is validated by 2–3 independent tools — no single tool decides:
 
-| Step | Tool 1 | Tool 2 | Tool 3 |
-|---|---|---|---|
-| Schema discovery | MSSQL ext | ora2pg | DAB |
-| SP translation | Copilot | ora2pg | sqlfluff + pgtap |
-| Data migration | pgLoader | DAB API regression | row counts |
-| Performance | SSMS plans | HammerDB TPC-C | pgbench |
-| Security | sec-check | Defender for DBs | CodeQL |
+| Step             | Tool 1     | Tool 2             | Tool 3           |
+| ---------------- | ---------- | ------------------ | ---------------- |
+| Schema discovery | MSSQL ext  | ora2pg             | DAB              |
+| SP translation   | Copilot    | ora2pg             | sqlfluff + pgtap |
+| Data migration   | pgLoader   | DAB API regression | row counts       |
+| Performance      | SSMS plans | HammerDB TPC-C     | pgbench          |
+| Security         | sec-check  | Defender for DBs   | CodeQL           |
 
 ---
 
@@ -221,16 +224,16 @@ sql-to-postgres-migration/
 
 ## Optional CLI tools (for advanced workflows)
 
-| Tool | Install | Purpose |
-|---|---|---|
-| .NET 8+ | <https://get.dot.net> | DAB CLI |
-| DAB CLI | `dotnet tool install microsoft.dataapibuilder -g` | API layer + MCP |
-| pgLoader | `apt install pgloader` / `brew install pgloader` | BYO endpoint migrations |
-| ora2pg | <https://ora2pg.darold.net> | Independent assessment + auto-conversion |
-| HammerDB | <https://hammerdb.com> | Cross-platform TPC-C benchmarking |
-| sqlfluff | `pip install sqlfluff` | PL/pgSQL linting |
-| pgTAP | `apt install pgtap` | PostgreSQL unit testing |
-| SSMS 22 | <https://learn.microsoft.com/ssms> | Source execution-plan baseline |
+| Tool     | Install                                           | Purpose                                  |
+| -------- | ------------------------------------------------- | ---------------------------------------- |
+| .NET 8+  | <https://get.dot.net>                             | DAB CLI                                  |
+| DAB CLI  | `dotnet tool install microsoft.dataapibuilder -g` | API layer + MCP                          |
+| pgLoader | `apt install pgloader` / `brew install pgloader`  | BYO endpoint migrations                  |
+| ora2pg   | <https://ora2pg.darold.net>                       | Independent assessment + auto-conversion |
+| HammerDB | <https://hammerdb.com>                            | Cross-platform TPC-C benchmarking        |
+| sqlfluff | `pip install sqlfluff`                            | PL/pgSQL linting                         |
+| pgTAP    | `apt install pgtap`                               | PostgreSQL unit testing                  |
+| SSMS 22  | <https://learn.microsoft.com/ssms>                | Source execution-plan baseline           |
 
 All of these are **pre-installed in the dev container** so workshop attendees never have to set up tooling.
 
@@ -260,13 +263,13 @@ Row validation:    31/31 matched
 
 ## Roadmap / phases
 
-| Phase | Status | Output |
-|---|---|---|
-| 1. Source assessment | ✅ stable | [docs/01-source-assessment.md](docs/01-source-assessment.md) |
-| 2. Migration execution | ✅ stable | [docs/02-migration-execution.md](docs/02-migration-execution.md) |
-| 3. Validation & testing | ✅ stable | [docs/03-validation-report.md](docs/03-validation-report.md) |
-| 4. Microsoft Fabric integration | 🟡 optional | [docs/04-fabric-integration.md](docs/04-fabric-integration.md) |
-| 5. Data agent + GraphQL | 🟡 optional | [docs/05-data-agent-setup.md](docs/05-data-agent-setup.md) |
+| Phase                           | Status      | Output                                                           |
+| ------------------------------- | ----------- | ---------------------------------------------------------------- |
+| 1. Source assessment            | ✅ stable   | [docs/01-source-assessment.md](docs/01-source-assessment.md)     |
+| 2. Migration execution          | ✅ stable   | [docs/02-migration-execution.md](docs/02-migration-execution.md) |
+| 3. Validation & testing         | ✅ stable   | [docs/03-validation-report.md](docs/03-validation-report.md)     |
+| 4. Microsoft Fabric integration | 🟡 optional | [docs/04-fabric-integration.md](docs/04-fabric-integration.md)   |
+| 5. Data agent + GraphQL         | 🟡 optional | [docs/05-data-agent-setup.md](docs/05-data-agent-setup.md)       |
 
 ---
 

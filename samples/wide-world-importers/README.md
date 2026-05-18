@@ -9,19 +9,20 @@ Microsoft's official SQL Server sample database used as the demo target for this
 
 ## Database Profile
 
-| Property | Value |
-|---|---|
-| Schemas | Application, Purchasing, Sales, Warehouse |
-| Tables | 15+ (with temporal/system-versioned) |
-| Stored Procedures | 30+ |
-| Views | 10+ |
-| Triggers | Multiple (temporal table maintenance) |
-| Special Types | HIERARCHYID, GEOGRAPHY, JSON columns |
-| Database Size | ~120 MB (full sample) |
+| Property          | Value                                     |
+| ----------------- | ----------------------------------------- |
+| Schemas           | Application, Purchasing, Sales, Warehouse |
+| Tables            | 15+ (with temporal/system-versioned)      |
+| Stored Procedures | 30+                                       |
+| Views             | 10+                                       |
+| Triggers          | Multiple (temporal table maintenance)     |
+| Special Types     | HIERARCHYID, GEOGRAPHY, JSON columns      |
+| Database Size     | ~120 MB (full sample)                     |
 
 ## Why WideWorldImporters?
 
 Ideal for migration demos because it contains:
+
 - **Complex stored procedures** with business logic
 - **Temporal tables** (system-versioned) that require special migration handling
 - **HIERARCHYID** columns that have no direct PostgreSQL equivalent
@@ -34,8 +35,8 @@ Ideal for migration demos because it contains:
 The recommended way is the one-click setup script which runs Docker containers and restores the backup automatically. From the dev container (or any bash shell with Docker available):
 
 ```bash
-bash scripts/setup-local-env.sh
-bash scripts/migrate-data.sh
+wsl zsh -c "scripts/setup-local-env.sh"
+wsl zsh -c "scripts/migrate-data.sh"
 ```
 
 If you need to restore manually inside the SQL Server Docker container:

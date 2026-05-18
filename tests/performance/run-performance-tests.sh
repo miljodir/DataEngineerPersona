@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/zsh
 # Run all performance tests and output JSON results
 # Usage: ./run-performance-tests.sh <database_name> [iteration_name]
 

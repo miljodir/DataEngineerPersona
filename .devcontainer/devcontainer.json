@@ -11,10 +11,19 @@
     "memory": "8gb",
     "storage": "32gb"
   },
-  "forwardPorts": [1433, 5432],
+  "forwardPorts": [
+    1433,
+    5432
+  ],
   "portsAttributes": {
-    "1433": { "label": "SQL Server", "onAutoForward": "silent" },
-    "5432": { "label": "PostgreSQL", "onAutoForward": "silent" }
+    "1433": {
+      "label": "SQL Server",
+      "onAutoForward": "silent"
+    },
+    "5432": {
+      "label": "PostgreSQL",
+      "onAutoForward": "silent"
+    }
   },
   "customizations": {
     "vscode": {
@@ -31,6 +40,6 @@
     }
   },
   "postCreateCommand": "bash .devcontainer/postCreate.sh",
-  "postStartCommand": "bash scripts/setup-local-env.sh",
+  "postStartCommand": "wsl zsh -c "scripts/setup-local-env.sh"",
   "remoteUser": "vscode"
 }

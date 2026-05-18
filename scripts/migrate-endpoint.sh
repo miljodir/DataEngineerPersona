@@ -12,9 +12,9 @@
 #   PG_HOST,        PG_PORT,        PG_DB,        PG_USER,        PG_PASSWORD
 #
 # Usage:
-#   bash scripts/migrate-endpoint.sh                  # full migration
-#   bash scripts/migrate-endpoint.sh --dry-run        # validate only
-#   bash scripts/migrate-endpoint.sh --schema-only    # tables/views only
+#   wsl zsh -c "scripts/migrate-endpoint.sh"                  # full migration
+#   wsl zsh -c "scripts/migrate-endpoint.sh --dry-run"        # validate only
+#   wsl zsh -c "scripts/migrate-endpoint.sh --schema-only"    # tables/views only
 # =============================================================================
 
 set -euo pipefail

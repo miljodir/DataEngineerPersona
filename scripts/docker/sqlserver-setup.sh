@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/zsh
 # SQL Server setup: download and restore WideWorldImporters backup
 # Run inside the sqlserver container or from host via:
 #   podman exec wwi-sqlserver bash /backup/sqlserver-setup.sh

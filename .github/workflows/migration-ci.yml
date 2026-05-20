@@ -9,7 +9,7 @@ on:
 jobs:
   migration-validation:
     runs-on: ubuntu-latest
-    
+
     services:
       postgres:
         image: postgres:16
@@ -52,8 +52,8 @@ jobs:
         continue-on-error: true
         run: |
           echo "=== Running pgtap tests ==="
-          PGPASSWORD=test_password psql -h localhost -U test_user -d wide_world_importers_test -c "CREATE EXTENSION IF NOT EXISTS pgtap;" || { echo '::warning::pgtap extension not available; skipping'; exit 0; }
-          pg_prove -d "postgresql://test_user:test_password@localhost/wide_world_importers_test" tests/pgtap/t/*.sql
+          PGPASSWORD=test_password psql -h 127.0.0.1 -U test_user -d wide_world_importers_test -c "CREATE EXTENSION IF NOT EXISTS pgtap;" || { echo '::warning::pgtap extension not available; skipping'; exit 0; }
+          pg_prove -d "postgresql://test_user:test_password@127.0.0.1/wide_world_importers_test" tests/pgtap/t/*.sql
         env:
           PGPASSWORD: test_password
 
@@ -61,7 +61,7 @@ jobs:
         continue-on-error: true
         run: |
           echo "=== Running security tests ==="
-          pg_prove -d "postgresql://test_user:test_password@localhost/wide_world_importers_test" tests/security/t/*.sql
+          pg_prove -d "postgresql://test_user:test_password@127.0.0.1/wide_world_importers_test" tests/security/t/*.sql
         env:
           PGPASSWORD: test_password
 
@@ -69,7 +69,7 @@ jobs:
         continue-on-error: true
         run: |
           echo "=== Row count comparison ==="
-          PGPASSWORD=test_password psql -h localhost -U test_user -d wide_world_importers_test -f tests/row-count-comparison/compare.sql
+          PGPASSWORD=test_password psql -h 127.0.0.1 -U test_user -d wide_world_importers_test -f tests/row-count-comparison/compare.sql
 
       - name: Step 5 - Generate consensus report
         run: |

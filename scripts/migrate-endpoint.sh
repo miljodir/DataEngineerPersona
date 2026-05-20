@@ -5,19 +5,21 @@
 # Use this script when migrating ANY customer SQL Server to ANY PostgreSQL.
 # Uses pgloader for the bulk transfer.
 #
-# For the WideWorldImporters local demo (Docker), use migrate-data.sh instead.
+# For the WideWorldImporters local demo (podman), use migrate-data.sh instead.
 #
 # Connection strings come from .env. Required:
 #   SQLSERVER_HOST, SQLSERVER_PORT, SQLSERVER_DB, SQLSERVER_USER, SQLSERVER_PASSWORD
 #   PG_HOST,        PG_PORT,        PG_DB,        PG_USER,        PG_PASSWORD
 #
 # Usage:
-#   bash scripts/migrate-endpoint.sh                  # full migration
-#   bash scripts/migrate-endpoint.sh --dry-run        # validate only
-#   bash scripts/migrate-endpoint.sh --schema-only    # tables/views only
+#   wsl zsh -c "scripts/migrate-endpoint.sh"                  # full migration
+#   wsl zsh -c "scripts/migrate-endpoint.sh --dry-run"        # validate only
+#   wsl zsh -c "scripts/migrate-endpoint.sh --schema-only"    # tables/views only
 # =============================================================================
 
 set -euo pipefail
+
+export SSL_CERT_FILE=/mnt/c/appl/repos/DataEngineerPersona/server-ca.pem
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -84,6 +86,12 @@ echo ""
 # ------------------------------------------------------------------
 # Preflight: pgloader installed?
 # ------------------------------------------------------------------
+pgloader() {
+  podman run --rm --network=host -v /tmp:/tmp -e TDSDUMP=/tmp/pgloader/freetds.log -e TDSVER=8.0 --name pgloader -i \
+    docker.io/esbalo/pgloader:1.0.0 \
+    pgloader "$@"
+}
+
 if ! command -v pgloader >/dev/null 2>&1; then
     cat >&2 <<EOF
 ERROR: pgloader not found.
@@ -91,11 +99,11 @@ ERROR: pgloader not found.
 Install:
   Ubuntu/Debian:  sudo apt-get install -y pgloader
   macOS (brew):   brew install pgloader
-  Docker:         alias pgloader='docker run --rm -i dimitri/pgloader pgloader'
   Docs:           https://pgloader.io
 EOF
     exit 127
 fi
+
 
 # ------------------------------------------------------------------
 # Generate pgloader config from template
@@ -103,6 +111,7 @@ fi
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 PGLOADER_CONF="$TMP_DIR/migration.load"
+export TDSVER=8.0
 
 INCLUDE_DATA="INCLUDING ONLY TABLE NAMES MATCHING ~/./"
 if [ "$SCHEMA_ONLY" = true ]; then
@@ -116,7 +125,7 @@ PG_PASSWORD_ENC="$(printf '%s' "$PG_PASSWORD" | sed -e 's/@/%40/g' -e 's/:/%3A/g
 cat > "$PGLOADER_CONF" <<EOF
 LOAD DATABASE
      FROM mssql://$SQLSERVER_USER:$SQLSERVER_PASSWORD_ENC@$SQLSERVER_HOST:$SQLSERVER_PORT/$SQLSERVER_DB
-     INTO postgresql://$PG_USER:$PG_PASSWORD_ENC@$PG_HOST:$PG_PORT/$PG_DB
+     INTO postgresql://$PG_USER:$PG_PASSWORD_ENC@$PG_HOST:$PG_PORT/$PG_DB?sslmode=disable
 
  WITH include drop, create tables, create indexes, reset sequences,
       foreign keys, downcase identifiers, uniquify index names

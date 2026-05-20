@@ -14,8 +14,8 @@
 
 ## Validation
 
-- [ ] I ran `bash scripts/setup-local-env.sh` and it completed cleanly
-- [ ] I ran `bash scripts/migrate-data.sh` and the row-count validation reported all matched
+- [ ] I ran `wsl zsh -c "scripts/setup-local-env.sh"` and it completed cleanly
+- [ ] I ran `wsl zsh -c "scripts/migrate-data.sh"` and the row-count validation reported all matched
 - [ ] I updated docs / README where behavior changed
 - [ ] I did NOT include any files matched by `.gitignore` (internal notes, local secrets, scratch files)
 

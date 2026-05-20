@@ -20,20 +20,20 @@ elif [ -f "$REPO_ROOT/.env.example" ]; then
     set -a; source "$REPO_ROOT/.env.example"; set +a
 fi
 
-SA_PASSWORD="${SA_PASSWORD:-Str0ngP@ssw0rd!}"
-PG_PASSWORD="${PG_PASSWORD:-Str0ngP@ssw0rd!}"
-PG_USER="${PG_USER:-wwi_user}"
-PG_DB="${PG_DB:-wide_world_importers}"
+SA_PASSWORD="${SA_PASSWORD}"
+PG_PASSWORD="${PG_PASSWORD}"
+PG_USER="${PG_USER:-postgres}"
+PG_DB="${PG_DB:-postgres}"
 
 # Helpers
 sqlcmd_exec() {
-    docker exec wwi-sqlserver /opt/mssql-tools18/bin/sqlcmd \
-        -S localhost -U sa -P "$SA_PASSWORD" -C -d WideWorldImporters \
+    podman exec wwi-sqlserver /opt/mssql-tools18/bin/sqlcmd \
+        -S 127.0.0.1 -U sa -P "$SA_PASSWORD" -C -d WideWorldImporters \
         -W -h -1 "$@"
 }
 
 psql_exec() {
-    docker exec wwi-postgres psql -U "$PG_USER" -d "$PG_DB" -q "$@"
+    podman exec postgres psql -U "$PG_USER" -d "$PG_DB" -q "$@"
 }
 
 echo ""
@@ -47,14 +47,14 @@ echo ""
 # ------------------------------------------------------------------
 echo "[1/5] Checking containers..."
 
-if ! docker exec wwi-sqlserver /opt/mssql-tools18/bin/sqlcmd \
-    -S localhost -U sa -P "$SA_PASSWORD" -C -Q "SELECT 1" -b &>/dev/null; then
+if ! podman exec wwi-sqlserver /opt/mssql-tools18/bin/sqlcmd \
+    -S 127.0.0.1 -U sa -P "$SA_PASSWORD" -C -Q "SELECT 1" -b &>/dev/null; then
     echo "  ERROR: SQL Server is not reachable. Run setup-local-env first."
     exit 1
 fi
 echo "  SQL Server: OK"
 
-if ! docker exec wwi-postgres pg_isready -U "$PG_USER" -d "$PG_DB" &>/dev/null; then
+if ! podman exec postgres pg_isready -U "$PG_USER" -d "$PG_DB" &>/dev/null; then
     echo "  ERROR: PostgreSQL is not reachable. Run setup-local-env first."
     exit 1
 fi
@@ -65,10 +65,10 @@ echo "  PostgreSQL: OK"
 # ------------------------------------------------------------------
 echo "[2/5] Creating PostgreSQL tables..."
 
-docker exec -i wwi-postgres psql -U "$PG_USER" -d "$PG_DB" -q \
-    < "$REPO_ROOT/scripts/docker/postgres-create-tables.sql"
+podman exec -i postgres psql -U "$PG_USER" -d "$PG_DB" -q \
+    < "$REPO_ROOT/scripts/podman/postgres-create-tables.sql"
 
-TABLE_COUNT=$(docker exec wwi-postgres psql -U "$PG_USER" -d "$PG_DB" -tAc \
+TABLE_COUNT=$(podman exec postgres psql -U "$PG_USER" -d "$PG_DB" -tAc \
     "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema IN ('application','purchasing','sales','warehouse') AND table_type='BASE TABLE'")
 echo "  Created $TABLE_COUNT tables"
 
@@ -131,8 +131,8 @@ for i in "${!TABLES[@]}"; do
     printf "  [%2d/%d] %-45s" "$IDX" "$TOTAL" "$LABEL"
 
     # Export: sqlcmd SELECT → tab-delimited file in shared volume
-    if docker exec wwi-sqlserver /opt/mssql-tools18/bin/sqlcmd \
-        -S localhost -U sa -P "$SA_PASSWORD" -C -d WideWorldImporters \
+    if podman exec wwi-sqlserver /opt/mssql-tools18/bin/sqlcmd \
+        -S 127.0.0.1 -U sa -P "$SA_PASSWORD" -C -d WideWorldImporters \
         -W -s"	" -h -1 -Q \
         "SET NOCOUNT ON; SELECT $COLUMNS FROM [$MS_SCHEMA].[$MS_TABLE]" \
         > "$EXPORT_DIR/${MS_SCHEMA}_${MS_TABLE}.csv" 2>/dev/null; then
@@ -147,7 +147,7 @@ for i in "${!TABLES[@]}"; do
         ROW_COUNT=$(wc -l < "$EXPORT_DIR/${MS_SCHEMA}_${MS_TABLE}.csv" | tr -d '[:space:]')
 
         # Import: COPY from file in shared volume (/data/export/...)
-        if docker exec wwi-postgres psql -U "$PG_USER" -d "$PG_DB" -q -c \
+        if podman exec postgres psql -U "$PG_USER" -d "$PG_DB" -q -c \
             "COPY $PG_SCHEMA.$PG_TABLE FROM '/data/$CSV_FILE' WITH (FORMAT text, DELIMITER E'\t', NULL 'NULL')" \
             2>/dev/null; then
             printf "%6s rows  ✓\n" "$ROW_COUNT"
@@ -175,10 +175,10 @@ fi
 # ------------------------------------------------------------------
 echo "[4/5] Installing PL/pgSQL functions..."
 
-docker exec -i wwi-postgres psql -U "$PG_USER" -d "$PG_DB" -q \
-    < "$REPO_ROOT/scripts/docker/install-functions.sql"
+podman exec -i postgres psql -U "$PG_USER" -d "$PG_DB" -q \
+    < "$REPO_ROOT/scripts/podman/install-functions.sql"
 
-FUNC_COUNT=$(docker exec wwi-postgres psql -U "$PG_USER" -d "$PG_DB" -tAc \
+FUNC_COUNT=$(podman exec postgres psql -U "$PG_USER" -d "$PG_DB" -tAc \
     "SELECT COUNT(*) FROM information_schema.routines WHERE routine_schema IN ('warehouse','sales','integration','sequences') AND routine_type='FUNCTION'")
 echo "  Installed $FUNC_COUNT functions"
 
@@ -198,7 +198,7 @@ for entry in "${TABLES[@]}"; do
     IFS='|' read -r MS_SCHEMA MS_TABLE PG_SCHEMA PG_TABLE _ <<< "$entry"
 
     MS_COUNT=$(sqlcmd_exec -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM [$MS_SCHEMA].[$MS_TABLE]" 2>/dev/null | tr -d '[:space:]')
-    PG_COUNT=$(docker exec wwi-postgres psql -U "$PG_USER" -d "$PG_DB" -tAc \
+    PG_COUNT=$(podman exec postgres psql -U "$PG_USER" -d "$PG_DB" -tAc \
         "SELECT COUNT(*) FROM $PG_SCHEMA.$PG_TABLE" 2>/dev/null | tr -d '[:space:]')
 
     if [ "$MS_COUNT" = "$PG_COUNT" ]; then

@@ -48,3 +48,7 @@ scripts/*.ps1
 # Temp / scratch
 .tmp/
 *.log
+
+.env
+*.pem
+.env.local

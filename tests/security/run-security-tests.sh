@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/zsh
 # Run all security pgtap tests
 # Usage: ./run-security-tests.sh <database_name>
 

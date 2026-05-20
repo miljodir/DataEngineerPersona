@@ -29,20 +29,19 @@ templates/                      # Reusable pgLoader and Fabric config templates
 - **Document the why.** Every type, index, and SP translation must include reasoning.
 - **Track results.** Every test run produces timestamped JSON. Trending is auto-generated.
 
-## The 12 Tools
+## The 11 Tools
 
 1. MSSQL Extension - source schema inspector
 2. PostgreSQL Extension - target schema validator
-3. ora2pg - independent assessment and auto-conversion
-4. pgLoader - bulk data migration with dry-run
-5. DAB (Data API Builder) - API abstraction + MCP server
-6. sqlfluff - PL/pgSQL linter
-7. pgtap / pg_prove - PL/pgSQL unit tests
-8. HammerDB - cross-platform TPC-C benchmarking
-9. sec-check - security scanning
-10. SSMS 22 - execution plan baseline
-11. Azure Premigration Validation - connectivity/schema checks
-12. Copilot Agent - orchestrates all tools
+3. pgLoader - bulk data migration with dry-run
+4. DAB (Data API Builder) - API abstraction + MCP server
+5. sqlfluff - PL/pgSQL linter
+6. pgtap / pg_prove - PL/pgSQL unit tests
+7. HammerDB - cross-platform TPC-C benchmarking
+8. sec-check - security scanning
+9. SSMS 22 - execution plan baseline
+10. Azure Premigration Validation - connectivity/schema checks
+11. Copilot Agent - orchestrates all tools
 
 ## Key Commands (canonical bash flow)
 
@@ -52,17 +51,17 @@ templates/                      # Reusable pgLoader and Fabric config templates
 # /db-migrate samples/wide-world-importers   # Local Docker demo
 
 # Demo: WideWorldImporters local Docker
-bash scripts/setup-local-env.sh         # Start containers + restore .bak
-bash scripts/migrate-data.sh            # Schema + data + functions + row-count check
+wsl zsh -c "scripts/setup-local-env.sh"         # Start containers + restore .bak
+wsl zsh -c "scripts/migrate-data.sh"            # Schema + data + functions + row-count check
 
 # BYO endpoint: any customer SQL Server -> any PostgreSQL
 cp .env.example .env                    # Edit SQLSERVER_* and PG_* values
-bash scripts/migrate-endpoint.sh        # pgloader-based generic transfer
+wsl zsh -c "scripts/migrate-endpoint.sh"        # pgloader-based generic transfer
 
 # Manual phases
-bash scripts/run-assessment.sh --connection-string "..."
-bash scripts/run-migration.sh
-bash scripts/validate-migration.sh
+wsl zsh -c "scripts/run-assessment.sh --connection-string '...'"
+wsl zsh -c "scripts/run-migration.sh"
+wsl zsh -c "scripts/validate-migration.sh"
 
 # DAB (Data API Builder)
 dab start --config dab/dab-config-sqlserver.json

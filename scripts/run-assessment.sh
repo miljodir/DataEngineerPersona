@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run source database assessment
-# Usage: ./scripts/run-assessment.sh --connection-string "Server=localhost;Database=WideWorldImporters;..."
+# Usage: ./scripts/run-assessment.sh --connection-string "Server=127.0.0.1;Database=WideWorldImporters;..."
 # Bash equivalent of scripts/run-assessment.ps1
 
 set -euo pipefail
@@ -27,7 +27,7 @@ done
 
 if [ -z "$CONNECTION_STRING" ]; then
     echo "ERROR: --connection-string is required"
-    echo "Usage: $0 --connection-string \"Server=localhost;Database=WideWorldImporters;Trusted_Connection=True;\""
+    echo "Usage: $0 --connection-string \"Server=127.0.0.1;Database=WideWorldImporters;Trusted_Connection=True;\""
     exit 1
 fi
 
@@ -36,13 +36,13 @@ echo "Connection: ${CONNECTION_STRING:0:50}..."
 echo "Output: $OUTPUT_DIR/"
 echo ""
 
-# Step 1: ora2pg assessment (if available)
-if command -v ora2pg &>/dev/null; then
-    echo "[1/4] Running ora2pg assessment..."
-    ora2pg -t SHOW_REPORT -c samples/wide-world-importers/ora2pg.conf 2>&1 | tee "$OUTPUT_DIR/ora2pg-report.txt"
-else
-    echo "[1/4] ora2pg not found - skipping (install: https://ora2pg.darold.net)"
-fi
+# # Step 1: ora2pg assessment (if available)
+# if command -v ora2pg &>/dev/null; then
+#     echo "[1/4] Running ora2pg assessment..."
+#     ora2pg -t SHOW_REPORT -c samples/wide-world-importers/ora2pg.conf 2>&1 | tee "$OUTPUT_DIR/ora2pg-report.txt"
+# else
+#     echo "[1/4] ora2pg not found - skipping (install: https://ora2pg.darold.net)"
+# fi
 
 # Step 2: DAB entity discovery (if available)
 if command -v dab &>/dev/null; then

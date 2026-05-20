@@ -21,8 +21,8 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 3. **Make your change.** Keep PRs small and focused.
 4. **Run the smoke test locally** before pushing:
    ```bash
-   bash scripts/setup-local-env.sh
-   bash scripts/migrate-data.sh
+   wsl zsh -c "scripts/setup-local-env.sh"
+   wsl zsh -c "scripts/migrate-data.sh"
    ```
 5. **Open a pull request** using the PR template. Link any related issues.
 

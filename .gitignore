@@ -50,3 +50,5 @@ scripts/*.ps1
 *.log
 
 .env
+*.pem
+.env.local

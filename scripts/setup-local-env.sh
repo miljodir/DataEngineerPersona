@@ -16,8 +16,8 @@ elif [ -f "$REPO_ROOT/.env.example" ]; then
     set -a; source "$REPO_ROOT/.env.example"; set +a
 fi
 
-SA_PASSWORD="${SA_PASSWORD:-Str0ngP@ssw0rd!}"
-PG_PASSWORD="${PG_PASSWORD:-Str0ngP@ssw0rd!}"
+SA_PASSWORD="${SA_PASSWORD}"
+PG_PASSWORD="${PG_PASSWORD}"
 
 echo ""
 echo "============================================="
@@ -120,7 +120,7 @@ fi
 echo "[6/6] Verifying PostgreSQL..."
 MAX_ATTEMPTS=15
 for i in $(seq 1 $MAX_ATTEMPTS); do
-    if podman exec wwi-postgres pg_isready -U wwi_user -d wide_world_importers &>/dev/null; then
+    if podman exec postgres pg_isready -U postgres -d postgres &>/dev/null; then
         echo "  PostgreSQL is ready."
         break
     fi
@@ -132,7 +132,7 @@ for i in $(seq 1 $MAX_ATTEMPTS); do
 done
 
 # Verify schemas were created
-PG_SCHEMAS=$(podman exec wwi-postgres psql -U wwi_user -d wide_world_importers -t -c \
+PG_SCHEMAS=$(podman exec postgres psql -U postgres -d postgres -t -c \
     "SELECT string_agg(schema_name, ', ' ORDER BY schema_name) FROM information_schema.schemata WHERE schema_name IN ('warehouse','sales','purchasing','application','integration','sequences','website');" 2>&1)
 echo "  PostgreSQL schemas: $(echo "$PG_SCHEMAS" | xargs)"
 

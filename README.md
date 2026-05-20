@@ -298,3 +298,35 @@ This project may contain trademarks or logos for projects, products, or services
 ## License
 
 [MIT](LICENSE)
+
+## Customizations
+
+### Support for Azure SQL
+
+Updated to work on source: Azure SQL (with sql auth). Requires podman installed for pgloader with this function set:
+
+```bash
+pgloader() {
+  podman run --rm --network=host -v /tmp:/tmp -e TDSDUMP=/tmp/pgloader/freetds.log -e TDSVER=8.0 --name pgloader -i \
+    docker.io/esbalo/pgloader:1.0.0 \
+    pgloader "$@"
+}
+```
+
+the image is specifically created to support Azure SQL. See github issue https://github.com/dimitri/pgloader/issues/1324#issuecomment-2059357214
+
+### Support for target GCP Cloud SQL for PostgreSQL:
+
+```bash
+# presumes gcloud is installed and authenticated
+connectionName=`gcloud sql instances describe <myinstance> --format="value(connectionName)"`
+# presumes cloud-sql-proxy is installed
+cloud-sql-proxy $connectionName
+```
+
+cloud-sql-proxy removes the need for explicit ssl settings. It is also possible to connect directly to the public IP without cloud-sql-proxy, but this complicates the setup a bit as you need to configure certificates: in case you need that, set these options and make sure the ssl connection is 'required'
+
+```
+-v $PWD/server-ca.pem:/certs/server-ca.pem:ro -v $PWD/client-cert.pem:/root/.postgresql/postgresql.crt:ro \
+-v $PWD/client-key.pem:/root/.postgresql/postgresql.key:ro -e SSL_CERT_FILE=/certs/server-ca.pem
+```

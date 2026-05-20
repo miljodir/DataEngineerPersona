@@ -14,14 +14,14 @@ CREATE SCHEMA IF NOT EXISTS integration;
 CREATE SCHEMA IF NOT EXISTS sequences;
 CREATE SCHEMA IF NOT EXISTS website;
 
--- Grant schema usage to the wwi_user (already the DB owner via POSTGRES_USER)
-GRANT ALL ON SCHEMA warehouse TO wwi_user;
-GRANT ALL ON SCHEMA sales TO wwi_user;
-GRANT ALL ON SCHEMA purchasing TO wwi_user;
-GRANT ALL ON SCHEMA application TO wwi_user;
-GRANT ALL ON SCHEMA integration TO wwi_user;
-GRANT ALL ON SCHEMA sequences TO wwi_user;
-GRANT ALL ON SCHEMA website TO wwi_user;
+-- Grant schema usage to the postgres (already the DB owner via POSTGRES_USER)
+GRANT ALL ON SCHEMA warehouse TO postgres;
+GRANT ALL ON SCHEMA sales TO postgres;
+GRANT ALL ON SCHEMA purchasing TO postgres;
+GRANT ALL ON SCHEMA application TO postgres;
+GRANT ALL ON SCHEMA integration TO postgres;
+GRANT ALL ON SCHEMA sequences TO postgres;
+GRANT ALL ON SCHEMA website TO postgres;
 
 -- Lock down public schema (sec-006)
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;

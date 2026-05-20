@@ -5,7 +5,7 @@
 
 set -e
 
-SA_PASSWORD="${SA_PASSWORD:-Str0ngP@ssw0rd!}"
+SA_PASSWORD="${SA_PASSWORD}"
 BAK_URL="https://github.com/Microsoft/sql-server-samples/releases/download/wide-world-importers-v1.0/WideWorldImporters-Full.bak"
 BAK_PATH="/backup/WideWorldImporters-Full.bak"
 

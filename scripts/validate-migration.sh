@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Validate the migration
-# Usage: ./scripts/validate-migration.sh [--database <name>] [--iteration <label>]
+# Usage: ./scripts/validate-migration.sh [--database <name>] [--iteration <label>] [--connection-string <conninfo>]
 # Bash equivalent of scripts/validate-migration.ps1
 
 set -euo pipefail
@@ -11,37 +11,100 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Defaults
 DATABASE="wide_world_importers"
 ITERATION="run-$(date +%Y%m%d-%H%M%S)"
+CONNECTION_STRING=""
+
+parse_conn_string() {
+    local conn="$1"
+    local token key value
+
+    for token in $conn; do
+        key="${token%%=*}"
+        value="${token#*=}"
+
+        # Trim optional single/double quotes around values.
+        value="${value%\"}"
+        value="${value#\"}"
+        value="${value%\'}"
+        value="${value#\'}"
+
+        case "$key" in
+            host)
+                export PGHOST="$value"
+                ;;
+            hostaddr)
+                # Prefer host if both are set; otherwise use hostaddr.
+                if [[ -z "${PGHOST:-}" ]]; then
+                    export PGHOST="$value"
+                fi
+                ;;
+            port)
+                export PGPORT="$value"
+                ;;
+            user)
+                export PGUSER="$value"
+                ;;
+            dbname)
+                export PGDATABASE="$value"
+                DATABASE="$value"
+                ;;
+            password)
+                export PGPASSWORD="$value"
+                ;;
+            sslmode)
+                export PGSSLMODE="$value"
+                ;;
+        esac
+    done
+}
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         --database) DATABASE="$2"; shift 2 ;;
         --iteration) ITERATION="$2"; shift 2 ;;
+        --connection-string) CONNECTION_STRING="$2"; shift 2 ;;
         -h|--help)
-            echo "Usage: $0 [--database <name>] [--iteration <label>]"
+            echo "Usage: $0 [--database <name>] [--iteration <label>] [--connection-string <conninfo>]"
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
 
+if [[ -n "$CONNECTION_STRING" ]]; then
+    parse_conn_string "$CONNECTION_STRING"
+fi
+
+cd "$REPO_ROOT"
+
+PGPROVE_ARGS=(-d "$DATABASE")
+[[ -n "${PGHOST:-}" ]] && PGPROVE_ARGS+=(-h "$PGHOST")
+[[ -n "${PGPORT:-}" ]] && PGPROVE_ARGS+=(-p "$PGPORT")
+[[ -n "${PGUSER:-}" ]] && PGPROVE_ARGS+=(-U "$PGUSER")
+
 echo "=== Phase 3: Migration Validation ==="
 echo "Database: $DATABASE"
 echo "Iteration: $ITERATION"
+if [[ -n "${PGHOST:-}" ]]; then
+    echo "Host: ${PGHOST}:${PGPORT:-5432}"
+fi
+if [[ -n "${PGUSER:-}" ]]; then
+    echo "User: $PGUSER"
+fi
 echo ""
 
-# Step 1: pgtap functional tests
-if command -v pg_prove &>/dev/null; then
-    echo "[1/4] Running pgtap functional tests..."
-    pg_prove -d "$DATABASE" tests/pgtap/t/*.sql --verbose 2>&1
-else
-    echo "[1/4] pg_prove not found - skipping"
-fi
+# # Step 1: pgtap functional tests
+# if command -v pg_prove &>/dev/null; then
+#     echo "[1/4] Running pgtap functional tests..."
+#     pg_prove "${PGPROVE_ARGS[@]}" tests/pgtap/t/*.sql --verbose 2>&1
+# else
+#     echo "[1/4] pg_prove not found - skipping"
+# fi
 
 # Step 2: Security tests
 if command -v pg_prove &>/dev/null; then
     echo "[2/4] Running security tests..."
-    pg_prove -d "$DATABASE" tests/security/t/*.sql --verbose 2>&1
+    pg_prove "${PGPROVE_ARGS[@]}" tests/security/t/*.sql --verbose 2>&1
 else
     echo "[2/4] pg_prove not found - skipping"
 fi

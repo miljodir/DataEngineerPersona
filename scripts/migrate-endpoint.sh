@@ -181,8 +181,10 @@ $EXCLUDE_CLAUSE
 
  CAST type bit when (= 1 precision) to boolean drop typemod,
       type uniqueidentifier to uuid drop typemod,
-      type nvarchar to "character varying" drop typemod, -- tbd
-      type nchar to "character varying" drop typemod,
+      type varchar to "character varying" keep typemod,
+      type nvarchar when (= precision 256) to "character varying" keep typemod,
+      type nvarchar to text drop typemod,
+      type nchar to "character varying" keep typemod,
       type datetime2 to timestamptz drop typemod,
       type datetimeoffset to timestamptz drop typemod,
       type money to numeric drop typemod,

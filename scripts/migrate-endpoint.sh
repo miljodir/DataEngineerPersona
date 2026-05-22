@@ -15,7 +15,9 @@
 #   wsl zsh -c "scripts/migrate-endpoint.sh"                     # full migration
 #   wsl zsh -c "scripts/migrate-endpoint.sh --dry-run"           # validate only
 #   wsl zsh -c "scripts/migrate-endpoint.sh --schema-only"       # tables/views only
+#   wsl zsh -c "scripts/migrate-endpoint.sh --data-only"         # data only into existing target schema
 #   wsl zsh -c "scripts/migrate-endpoint.sh --with-foreign-keys" # opt in to pgloader FK DDL
+#   wsl zsh -c "scripts/migrate-endpoint.sh --uniquify-index-names" # add pgloader idx_<oid>_ prefix
 # =============================================================================
 
 set -euo pipefail
@@ -44,13 +46,19 @@ fi
 # ------------------------------------------------------------------
 DRY_RUN=false
 SCHEMA_ONLY=false
+DATA_ONLY=true
 CREATE_FOREIGN_KEYS=false
+# PGLOADER will always uniqify index names for PKs but seem to respect this for FKs
+# Ref https://github.com/dimitri/pgloader/issues/1257
+UNIQUIFY_INDEX_NAMES=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --dry-run)     DRY_RUN=true; shift ;;
         --schema-only) SCHEMA_ONLY=true; shift ;;
+        --data-only)   DATA_ONLY=true; shift ;;
         --with-foreign-keys) CREATE_FOREIGN_KEYS=true; shift ;;
+        --uniquify-index-names) UNIQUIFY_INDEX_NAMES=true; shift ;;
         -h|--help)
             sed -n '1,20p' "$0"
             exit 0
@@ -58,6 +66,11 @@ while [[ $# -gt 0 ]]; do
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
+
+if [ "$SCHEMA_ONLY" = true ] && [ "$DATA_ONLY" = true ]; then
+  echo "ERROR: --schema-only and --data-only are mutually exclusive." >&2
+  exit 1
+fi
 
 # ------------------------------------------------------------------
 # Resolve connection variables
@@ -77,6 +90,19 @@ done
 # Map the common .env names (set by .env.example for the demo) to BYO names
 # This lets demo defaults like SA_PASSWORD work when SQLSERVER_PASSWORD is unset.
 SQLSERVER_PASSWORD="${SQLSERVER_PASSWORD:-${SA_PASSWORD:-}}"
+
+# Exclude-table regex configuration:
+# - If EXCLUDE_TABLES_REGEX is unset, default to the repo's historic pattern
+# - If EXCLUDE_TABLES_REGEX is set to an empty string, we intentionally omit the EXCLUDING clause
+if [ -z "${EXCLUDE_TABLES_REGEX+x}" ]; then
+    EXCLUDE_TABLES_REGEX='^(__EFMigrationsHistory|Language)$'
+fi
+
+if [ -n "$EXCLUDE_TABLES_REGEX" ]; then
+    EXCLUDE_CLAUSE="EXCLUDING TABLE NAMES MATCHING ~/$EXCLUDE_TABLES_REGEX/"
+else
+    EXCLUDE_CLAUSE=""
+fi
 
 echo ""
 echo "============================================="
@@ -117,11 +143,23 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 PGLOADER_CONF="$TMP_DIR/migration.load"
 export TDSVER=8.0
 
-# downcase identifiers
-WITH_OPTIONS="include drop, create tables, create indexes, reset sequences, downcase identifiers, uniquify index names"
+# Keep CamelCase identifiers and skip pgloader's sequence reset. pgloader's
+# reset query can break when identifiers are quoted (e.g. ""Id"").
+WITH_OPTIONS="include drop, create tables, create indexes, reset no sequences, quote identifiers, preserve index names"
+
+# SQL Server index names are table-scoped, while PostgreSQL index names are
+# schema-scoped. Enable pgloader name uniquification only when needed.
+if [ "$UNIQUIFY_INDEX_NAMES" = true ]; then
+    WITH_OPTIONS="$WITH_OPTIONS, uniquify index names"
+fi
 
 if [ "$SCHEMA_ONLY" = true ]; then
     WITH_OPTIONS="$WITH_OPTIONS, schema only"
+fi
+
+# Ignore constraints created by EFCore, only focus on mapping the data into the correct table and colum names
+if [ "$DATA_ONLY" = true ]; then
+  WITH_OPTIONS="$WITH_OPTIONS, data only"
 fi
 
 # pgloader can emit invalid FK DDL for SQL Server schemas that reference
@@ -136,8 +174,6 @@ fi
 SQLSERVER_PASSWORD_ENC="$(printf '%s' "$SQLSERVER_PASSWORD" | sed -e 's/@/%40/g' -e 's/:/%3A/g' -e 's/\//%2F/g' -e 's/?/%3F/g' -e 's/#/%23/g' -e 's/!/%21/g')"
 PG_PASSWORD_ENC="$(printf '%s' "$PG_PASSWORD" | sed -e 's/@/%40/g' -e 's/:/%3A/g' -e 's/\//%2F/g' -e 's/?/%3F/g' -e 's/#/%23/g' -e 's/!/%21/g')"
 
-# TODO "downcase identifiers" or "quote identifiers"?
-# uniqfy index names?
 
 cat > "$PGLOADER_CONF" <<EOF
 LOAD DATABASE
@@ -146,6 +182,8 @@ LOAD DATABASE
      ALTER SCHEMA 'dbo' RENAME TO 'public'
 
  WITH $WITH_OPTIONS
+
+ EXCLUDING TABLE NAMES LIKE '__EFMigrationsHistory' IN SCHEMA 'dbo'
 
  SET work_mem to '128MB',
      maintenance_work_mem to '512 MB',
@@ -177,12 +215,18 @@ if [ "$DRY_RUN" = true ]; then
     exit 0
 fi
 
-echo "[1/2] Running pgloader..."
+TOTAL_STEPS=1
+if [ "$SCHEMA_ONLY" = false ]; then
+    TOTAL_STEPS=2
+fi
+
+echo "[1/$TOTAL_STEPS] Running pgloader..."
 pgloader "$PGLOADER_CONF"
 
-echo ""
-echo "[2/2] Verifying target..."
+
+echo "[$TOTAL_STEPS/$TOTAL_STEPS] Verifying target..."
 PGPASSWORD="$PG_PASSWORD" psql \
+    -v ON_ERROR_STOP=1 \
     -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DB" \
     -c "SELECT table_schema, COUNT(*) AS tables FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') GROUP BY table_schema ORDER BY table_schema;"
 
@@ -195,6 +239,11 @@ if [ "$CREATE_FOREIGN_KEYS" = true ]; then
     echo "  Foreign keys: requested via --with-foreign-keys"
 else
     echo "  Foreign keys: skipped by default (safer for alternate/composite key schemas)"
+fi
+if [ "$UNIQUIFY_INDEX_NAMES" = true ]; then
+    echo "  Index names: pgloader uniquified (idx_<oid>_<source_name>)"
+else
+    echo "  Index names: restoring EF-style PK_/IX_ names (removes idx_<oid>_ prefix)"
 fi
 echo ""
 echo "  Next steps:"

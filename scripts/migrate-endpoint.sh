@@ -112,6 +112,14 @@ pgloader() {
     pgloader "$@"
 }
 
+psql_target() {
+  PGPASSWORD="$PG_PASSWORD" psql \
+    -X \
+    -v ON_ERROR_STOP=1 \
+    -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DB" \
+    "$@"
+}
+
 if ! command -v pgloader >/dev/null 2>&1; then
     cat >&2 <<EOF
 ERROR: pgloader not found.
@@ -129,9 +137,101 @@ fi
 # Generate pgloader config from template
 # ------------------------------------------------------------------
 TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
 PGLOADER_CONF="$TMP_DIR/migration.load"
+TARGET_FK_DROP_SQL="$TMP_DIR/target-fks.drop.sql"
+TARGET_FK_RESTORE_SQL="$TMP_DIR/target-fks.restore.sql"
+TARGET_FK_VALIDATE_SQL="$TMP_DIR/target-fks.validate.sql"
+TARGET_FK_COUNT=0
+TARGET_FKS_DROPPED=false
 export TDSVER=8.0
+
+cleanup() {
+  local exit_code=$?
+
+  if [ "$TARGET_FKS_DROPPED" = true ] && [ -s "$TARGET_FK_RESTORE_SQL" ]; then
+    echo ""
+    echo "Restoring target foreign keys after interrupted load..."
+    if ! psql_target -1 -f "$TARGET_FK_RESTORE_SQL" >/dev/null; then
+      echo "WARNING: Failed to restore target foreign keys automatically." >&2
+      echo "         Reapply them manually with: psql -h \"$PG_HOST\" -p \"$PG_PORT\" -U \"$PG_USER\" -d \"$PG_DB\" -f \"$TARGET_FK_RESTORE_SQL\"" >&2
+    fi
+  fi
+
+  rm -rf "$TMP_DIR"
+  exit "$exit_code"
+}
+
+trap cleanup EXIT
+
+prepare_target_foreign_keys() {
+  psql_target -At <<'SQL' > "$TARGET_FK_DROP_SQL"
+SELECT format(
+         'ALTER TABLE %I.%I DROP CONSTRAINT %I;',
+         nsp.nspname,
+         rel.relname,
+         con.conname
+       )
+FROM pg_constraint con
+JOIN pg_class rel ON rel.oid = con.conrelid
+JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+WHERE con.contype = 'f'
+  AND nsp.nspname = 'public'
+ORDER BY rel.relname, con.conname;
+SQL
+
+  psql_target -At <<'SQL' > "$TARGET_FK_RESTORE_SQL"
+SELECT format(
+         'ALTER TABLE %I.%I ADD CONSTRAINT %I %s NOT VALID;',
+         nsp.nspname,
+         rel.relname,
+         con.conname,
+         pg_get_constraintdef(con.oid)
+       )
+FROM pg_constraint con
+JOIN pg_class rel ON rel.oid = con.conrelid
+JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+WHERE con.contype = 'f'
+  AND nsp.nspname = 'public'
+ORDER BY rel.relname, con.conname;
+SQL
+
+  psql_target -At <<'SQL' > "$TARGET_FK_VALIDATE_SQL"
+SELECT format(
+         'ALTER TABLE %I.%I VALIDATE CONSTRAINT %I;',
+         nsp.nspname,
+         rel.relname,
+         con.conname
+       )
+FROM pg_constraint con
+JOIN pg_class rel ON rel.oid = con.conrelid
+JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+WHERE con.contype = 'f'
+  AND nsp.nspname = 'public'
+ORDER BY rel.relname, con.conname;
+SQL
+
+  TARGET_FK_COUNT="$(grep -cve '^[[:space:]]*$' "$TARGET_FK_DROP_SQL" || true)"
+}
+
+drop_target_foreign_keys() {
+  if [ "$TARGET_FK_COUNT" -eq 0 ]; then
+    return
+  fi
+
+  echo "  Temporarily dropping $TARGET_FK_COUNT existing target foreign keys so pgloader can load dependent tables in parallel..."
+  psql_target -1 -f "$TARGET_FK_DROP_SQL" >/dev/null
+  TARGET_FKS_DROPPED=true
+}
+
+restore_target_foreign_keys() {
+  if [ "$TARGET_FK_COUNT" -eq 0 ]; then
+    return
+  fi
+
+  psql_target -1 -f "$TARGET_FK_RESTORE_SQL" >/dev/null
+  TARGET_FKS_DROPPED=false
+  psql_target -1 -f "$TARGET_FK_VALIDATE_SQL" >/dev/null
+}
 
 # Keep CamelCase identifiers and skip pgloader's sequence reset. pgloader's
 # reset query can break when identifiers are quoted (e.g. ""Id"").
@@ -208,20 +308,31 @@ if [ "$DRY_RUN" = true ]; then
     exit 0
 fi
 
-TOTAL_STEPS=1
-if [ "$SCHEMA_ONLY" = false ]; then
-    TOTAL_STEPS=2
+MANAGE_TARGET_FOREIGN_KEYS=false
+if [ "$SCHEMA_ONLY" = false ] && [ "$DATA_ONLY" = true ]; then
+    MANAGE_TARGET_FOREIGN_KEYS=true
+    prepare_target_foreign_keys
+fi
+
+TOTAL_STEPS=2
+if [ "$MANAGE_TARGET_FOREIGN_KEYS" = true ] && [ "$TARGET_FK_COUNT" -gt 0 ]; then
+    TOTAL_STEPS=3
+    drop_target_foreign_keys
 fi
 
 echo "[1/$TOTAL_STEPS] Running pgloader..."
 pgloader "$PGLOADER_CONF"
 
+CURRENT_STEP=1
+if [ "$MANAGE_TARGET_FOREIGN_KEYS" = true ] && [ "$TARGET_FK_COUNT" -gt 0 ]; then
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    echo "[$CURRENT_STEP/$TOTAL_STEPS] Restoring target foreign keys..."
+    restore_target_foreign_keys
+fi
 
-echo "[$TOTAL_STEPS/$TOTAL_STEPS] Verifying target..."
-PGPASSWORD="$PG_PASSWORD" psql \
-    -v ON_ERROR_STOP=1 \
-    -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DB" \
-    -c "SELECT table_schema, COUNT(*) AS tables FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') GROUP BY table_schema ORDER BY table_schema;"
+CURRENT_STEP=$((CURRENT_STEP + 1))
+echo "[$CURRENT_STEP/$TOTAL_STEPS] Verifying target..."
+psql_target -c "SELECT table_schema, COUNT(*) AS tables FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') GROUP BY table_schema ORDER BY table_schema;"
 
 echo ""
 echo "============================================="

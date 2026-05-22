@@ -91,18 +91,8 @@ fi
 # This lets demo defaults like SA_PASSWORD work when SQLSERVER_PASSWORD is unset.
 SQLSERVER_PASSWORD="${SQLSERVER_PASSWORD:-${SA_PASSWORD:-}}"
 
-# Exclude-table regex configuration:
-# - If EXCLUDE_TABLES_REGEX is unset, default to the repo's historic pattern
-# - If EXCLUDE_TABLES_REGEX is set to an empty string, we intentionally omit the EXCLUDING clause
-if [ -z "${EXCLUDE_TABLES_REGEX+x}" ]; then
-    EXCLUDE_TABLES_REGEX='^(__EFMigrationsHistory|Language)$'
-fi
 
-if [ -n "$EXCLUDE_TABLES_REGEX" ]; then
-    EXCLUDE_CLAUSE="EXCLUDING TABLE NAMES MATCHING ~/$EXCLUDE_TABLES_REGEX/"
-else
-    EXCLUDE_CLAUSE=""
-fi
+EXCLUDE_CLAUSE=" EXCLUDING TABLE NAMES LIKE 'Language', '__EFMigrationsHistory' IN SCHEMA 'dbo'"
 
 echo ""
 echo "============================================="
@@ -145,7 +135,7 @@ export TDSVER=8.0
 
 # Keep CamelCase identifiers and skip pgloader's sequence reset. pgloader's
 # reset query can break when identifiers are quoted (e.g. ""Id"").
-WITH_OPTIONS="include drop, create tables, create indexes, reset no sequences, quote identifiers, preserve index names"
+WITH_OPTIONS="include drop, create tables, create indexes, reset sequences, quote identifiers, preserve index names"
 
 # SQL Server index names are table-scoped, while PostgreSQL index names are
 # schema-scoped. Enable pgloader name uniquification only when needed.
@@ -183,7 +173,7 @@ LOAD DATABASE
 
  WITH $WITH_OPTIONS
 
- EXCLUDING TABLE NAMES LIKE '__EFMigrationsHistory' IN SCHEMA 'dbo'
+$EXCLUDE_CLAUSE
 
  SET work_mem to '128MB',
      maintenance_work_mem to '512 MB',
@@ -191,16 +181,17 @@ LOAD DATABASE
 
  CAST type bit when (= 1 precision) to boolean drop typemod,
       type uniqueidentifier to uuid drop typemod,
-      type nvarchar to text drop typemod,
-      type nchar to text drop typemod,
+      type nvarchar to "character varying" drop typemod, -- tbd
+      type nchar to "character varying" drop typemod,
       type datetime2 to timestamptz drop typemod,
       type datetimeoffset to timestamptz drop typemod,
       type money to numeric drop typemod,
       type smallmoney to numeric drop typemod,
       type tinyint to smallint drop typemod,
-      type hierarchyid to text drop typemod,
-      type geography to text drop typemod,
-      type geometry to text drop typemod
+      type hierarchyid to "character varying" drop typemod,
+      type geography to "character varying" drop typemod,
+      type geometry to "character varying" drop typemod,
+      type int with extra auto_increment to serial drop typemod
 ;
 EOF
 

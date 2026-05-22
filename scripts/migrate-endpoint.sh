@@ -12,14 +12,16 @@
 #   PG_HOST,        PG_PORT,        PG_DB,        PG_USER,        PG_PASSWORD
 #
 # Usage:
-#   wsl zsh -c "scripts/migrate-endpoint.sh"                  # full migration
-#   wsl zsh -c "scripts/migrate-endpoint.sh --dry-run"        # validate only
-#   wsl zsh -c "scripts/migrate-endpoint.sh --schema-only"    # tables/views only
+#   wsl zsh -c "scripts/migrate-endpoint.sh"                     # full migration
+#   wsl zsh -c "scripts/migrate-endpoint.sh --dry-run"           # validate only
+#   wsl zsh -c "scripts/migrate-endpoint.sh --schema-only"       # tables/views only
+#   wsl zsh -c "scripts/migrate-endpoint.sh --with-foreign-keys" # opt in to pgloader FK DDL
 # =============================================================================
 
 set -euo pipefail
 
 export SSL_CERT_FILE=/mnt/c/appl/repos/DataEngineerPersona/server-ca.pem
+export TDS_MAX_CONN=100
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -42,11 +44,13 @@ fi
 # ------------------------------------------------------------------
 DRY_RUN=false
 SCHEMA_ONLY=false
+CREATE_FOREIGN_KEYS=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --dry-run)     DRY_RUN=true; shift ;;
         --schema-only) SCHEMA_ONLY=true; shift ;;
+        --with-foreign-keys) CREATE_FOREIGN_KEYS=true; shift ;;
         -h|--help)
             sed -n '1,20p' "$0"
             exit 0
@@ -87,7 +91,7 @@ echo ""
 # Preflight: pgloader installed?
 # ------------------------------------------------------------------
 pgloader() {
-  podman run --rm --network=host -v /tmp:/tmp -e TDSDUMP=/tmp/pgloader/freetds.log -e TDSVER=8.0 --name pgloader -i \
+  podman run --rm --network=host -v /tmp:/tmp -e TDSDUMP=/tmp/pgloader/freetds.log -e TDSVER=8.0 -e TDS_MAX_CONN=100 --name pgloader -i \
     docker.io/esbalo/pgloader:1.0.0 \
     pgloader "$@"
 }
@@ -113,22 +117,35 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 PGLOADER_CONF="$TMP_DIR/migration.load"
 export TDSVER=8.0
 
-INCLUDE_DATA="INCLUDING ONLY TABLE NAMES MATCHING ~/./"
+# downcase identifiers
+WITH_OPTIONS="include drop, create tables, create indexes, reset sequences, downcase identifiers, uniquify index names"
+
 if [ "$SCHEMA_ONLY" = true ]; then
-    INCLUDE_DATA="WITH no data, create tables, create indexes, reset sequences"
+    WITH_OPTIONS="$WITH_OPTIONS, schema only"
+fi
+
+# pgloader can emit invalid FK DDL for SQL Server schemas that reference
+# alternate/composite keys; keep FK creation opt-in for the BYO flow.
+if [ "$CREATE_FOREIGN_KEYS" = true ]; then
+    WITH_OPTIONS="$WITH_OPTIONS, foreign keys"
+else
+    WITH_OPTIONS="$WITH_OPTIONS, no foreign keys"
 fi
 
 # URL-encode the SQL Server password (pgloader connection URI safe)
 SQLSERVER_PASSWORD_ENC="$(printf '%s' "$SQLSERVER_PASSWORD" | sed -e 's/@/%40/g' -e 's/:/%3A/g' -e 's/\//%2F/g' -e 's/?/%3F/g' -e 's/#/%23/g' -e 's/!/%21/g')"
 PG_PASSWORD_ENC="$(printf '%s' "$PG_PASSWORD" | sed -e 's/@/%40/g' -e 's/:/%3A/g' -e 's/\//%2F/g' -e 's/?/%3F/g' -e 's/#/%23/g' -e 's/!/%21/g')"
 
+# TODO "downcase identifiers" or "quote identifiers"?
+# uniqfy index names?
+
 cat > "$PGLOADER_CONF" <<EOF
 LOAD DATABASE
      FROM mssql://$SQLSERVER_USER:$SQLSERVER_PASSWORD_ENC@$SQLSERVER_HOST:$SQLSERVER_PORT/$SQLSERVER_DB
      INTO postgresql://$PG_USER:$PG_PASSWORD_ENC@$PG_HOST:$PG_PORT/$PG_DB?sslmode=disable
+     ALTER SCHEMA 'dbo' RENAME TO 'public'
 
- WITH include drop, create tables, create indexes, reset sequences,
-      foreign keys, downcase identifiers, uniquify index names
+ WITH $WITH_OPTIONS
 
  SET work_mem to '128MB',
      maintenance_work_mem to '512 MB',
@@ -173,6 +190,12 @@ echo ""
 echo "============================================="
 echo "  BYO Migration complete!"
 echo "============================================="
+echo ""
+if [ "$CREATE_FOREIGN_KEYS" = true ]; then
+    echo "  Foreign keys: requested via --with-foreign-keys"
+else
+    echo "  Foreign keys: skipped by default (safer for alternate/composite key schemas)"
+fi
 echo ""
 echo "  Next steps:"
 echo "    1. Run pgtap tests:         pg_prove -d \"postgresql://$PG_USER@$PG_HOST/$PG_DB\" tests/pgtap/t/"

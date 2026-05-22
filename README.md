@@ -128,6 +128,7 @@ cp .env.example .env
 
 wsl zsh -c "scripts/migrate-endpoint.sh --dry-run"    # validate connectivity + type mappings
 wsl zsh -c "scripts/migrate-endpoint.sh"              # perform migration via pgloader
+wsl zsh -c "scripts/migrate-endpoint.sh --with-foreign-keys"  # opt in to pgloader FK DDL
 ```
 
 The same Copilot agent works on the customer endpoint:
@@ -137,6 +138,8 @@ The same Copilot agent works on the customer endpoint:
 ```
 
 (no argument → BYO mode → reads `.env`).
+
+`migrate-endpoint.sh` skips pgloader-managed foreign keys by default. This avoids a common pgloader failure mode where SQL Server alternate/composite key relationships are emitted as invalid PostgreSQL FK DDL such as `ERROR 42830: there is no unique constraint matching given keys`. Only use `--with-foreign-keys` after confirming the referenced columns will exist in PostgreSQL as `PRIMARY KEY` or `UNIQUE` constraints, not just indexes.
 
 Required tools: `pgloader`, `psql`, `sqlcmd`. All three are pre-installed in the dev container.
 
@@ -330,3 +333,10 @@ cloud-sql-proxy removes the need for explicit ssl settings. It is also possible 
 -v $PWD/server-ca.pem:/certs/server-ca.pem:ro -v $PWD/client-cert.pem:/root/.postgresql/postgresql.crt:ro \
 -v $PWD/client-key.pem:/root/.postgresql/postgresql.key:ro -e SSL_CERT_FILE=/certs/server-ca.pem
 ```
+
+### Custom usage
+
+./scripts/migrate-endpoint.sh
+
+- Currently not working:
+  - ./scripts/validate-migration.sh --database xx --connection-string "hostaddr=127.0.0.1 port=5432 user=... password=... dbname=..."

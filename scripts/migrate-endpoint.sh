@@ -350,7 +350,6 @@ else
 fi
 echo ""
 echo "  Next steps:"
-echo "    1. Run pgtap tests:         pg_prove -d \"postgresql://$PGUSER@$PGHOST/$PGDATABASE\" tests/pgtap/t/"
-echo "    2. Run row-count compare:   psql ... -f tests/row-count-comparison/compare.sql"
-echo "    3. Use the agent in Copilot Chat: /db-migrate"
+echo "    1. Run: ./scripts/validate-migration.sh"
+echo "    Or use the agent in Copilot Chat: /db-migrate"
 echo ""

@@ -337,6 +337,6 @@ cloud-sql-proxy removes the need for explicit ssl settings. It is also possible 
 ### Custom usage
 
 ./scripts/migrate-endpoint.sh
+./scripts/validate-migration.sh --database xx --connection-string "hostaddr=127.0.0.1 port=5432 user=... password=... dbname=..."
 
-- Currently not working:
-  - ./scripts/validate-migration.sh --database xx --connection-string "hostaddr=127.0.0.1 port=5432 user=... password=... dbname=..."
+`validate-migration.sh` now compares source SQL Server metadata and target PostgreSQL metadata for row counts, primary keys, foreign keys, views, functions, and column type mappings, then regenerates `docs/03-validation-report.md`.

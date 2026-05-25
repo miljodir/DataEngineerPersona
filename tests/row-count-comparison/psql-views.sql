@@ -1,13 +1,26 @@
 SELECT
-    v.table_schema || '.' || v.table_name AS view_name,
+    n.nspname || '.' || c.relname AS view_name,
     COALESCE(
-        string_agg(c.column_name, ', ' ORDER BY c.ordinal_position),
+        string_agg(a.attname, ', ' ORDER BY a.attnum),
         ''
     ) AS view_columns
-FROM information_schema.views AS v
-LEFT JOIN information_schema.columns AS c
-    ON c.table_schema = v.table_schema
-   AND c.table_name = v.table_name
-WHERE v.table_schema NOT IN ('pg_catalog', 'information_schema')
-GROUP BY v.table_schema, v.table_name
+FROM pg_class AS c
+JOIN pg_namespace AS n
+    ON n.oid = c.relnamespace
+LEFT JOIN pg_attribute AS a
+    ON a.attrelid = c.oid
+   AND a.attnum > 0
+   AND NOT a.attisdropped
+WHERE c.relkind = 'v'
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND NOT EXISTS (
+      SELECT 1
+      FROM pg_depend AS dep
+      JOIN pg_extension AS ext
+          ON ext.oid = dep.refobjid
+      WHERE dep.classid = 'pg_class'::regclass
+        AND dep.objid = c.oid
+        AND dep.deptype = 'e'
+  )
+GROUP BY n.nspname, c.relname
 ORDER BY view_name;

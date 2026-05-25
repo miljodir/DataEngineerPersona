@@ -185,6 +185,176 @@ md_escape() {
     printf '%s' "$value"
 }
 
+strip_outer_parentheses() {
+    local value="$1"
+    local previous=""
+
+    while [[ "$value" != "$previous" && "$value" == \(*\) ]]; do
+        previous="$value"
+        value="${value#(}"
+        value="${value%)}"
+    done
+
+    printf '%s' "$value"
+}
+
+normalize_identifier_list() {
+    local value
+
+    value="$(printf '%s' "$1" | sed -E \
+        -e 's/\[([^][]+)\]/\1/g' \
+        -e 's/"([^"]+)"/\1/g' \
+        -e 's/[[:space:]]*,[[:space:]]*/,/g' \
+        -e 's/^[[:space:]]+//' \
+        -e 's/[[:space:]]+$//')"
+
+    printf '%s' "$value"
+}
+
+normalize_expression_common() {
+    local value
+
+    value="$(to_lower "$(trim "$1")")"
+    value="$(printf '%s' "$value" | tr '\r\n' '  ' | sed -E \
+        -e 's/\[([^][]+)\]/\1/g' \
+        -e 's/"([^"]+)"/\1/g' \
+        -e "s/n'/'/g" \
+        -e 's/::[a-z_ ]+//g' \
+        -e 's/[[:space:]]+/ /g' \
+        -e 's/^[[:space:]]+//' \
+        -e 's/[[:space:]]+$//')"
+
+    value="$(strip_outer_parentheses "$value")"
+    value="$(printf '%s' "$value" | sed -E \
+        -e 's/^check[[:space:]]*//' \
+        -e 's/\btrue\b/1/g' \
+        -e 's/\bfalse\b/0/g' \
+        -e 's/[[:space:]]+//g')"
+
+    printf '%s' "$value"
+}
+
+normalize_filter_expression() {
+    local value
+
+    value="$(normalize_expression_common "$1")"
+    printf '%s' "$value"
+}
+
+normalize_check_expression() {
+    local value
+
+    value="$(normalize_expression_common "$1")"
+    printf '%s' "$value"
+}
+
+normalize_default_expression() {
+    local value
+
+    value="$(normalize_expression_common "$1")"
+    value="$(printf '%s' "$value" | sed -E \
+        -e 's/getdate\(\)|sysutcdatetime\(\)|sysdatetimeoffset\(\)|current_timestamp|now\(\)/current_timestamp/g' \
+        -e 's/newid\(\)|gen_random_uuid\(\)|uuid_generate_v4\(\)/uuid_default/g' \
+        -e 's/newsequentialid\(\)/sequential_uuid_default/g')"
+
+    printf '%s' "$value"
+}
+
+DEFAULT_NOTE=""
+
+default_expression_compatible() {
+    local source_default="$1"
+    local target_default="$2"
+    local source_type="$3"
+    local target_type="$4"
+    local source_norm target_norm source_type_norm target_type_norm
+
+    source_norm="$(normalize_default_expression "$source_default")"
+    target_norm="$(normalize_default_expression "$target_default")"
+    source_type_norm="$(to_lower "$(trim "$source_type")")"
+    target_type_norm="$(to_lower "$(trim "$target_type")")"
+
+    if [[ -z "$source_norm" && -z "$target_norm" ]]; then
+        DEFAULT_NOTE="No default on either side"
+        return 0
+    fi
+
+    if [[ -z "$source_norm" || -z "$target_norm" ]]; then
+        DEFAULT_NOTE="Default presence differs"
+        return 1
+    fi
+
+    if [[ "$source_norm" == "null" && "$target_norm" == "current_timestamp" ]]; then
+        DEFAULT_NOTE="Target now auto-populates CURRENT_TIMESTAMP where the source defaulted NULL; fix only if that insert-time behavior was not intentional in the PostgreSQL model"
+        return 1
+    fi
+
+    if [[ "$source_norm" == "null" && "$target_norm" == "0" ]]; then
+        DEFAULT_NOTE="Target now supplies a zero/false default where the source defaulted NULL; fix only if omitted inserts should continue storing NULL"
+        return 1
+    fi
+
+    if [[ "$source_norm" == "null" && "$target_norm" == "uuid_default" ]]; then
+        DEFAULT_NOTE="Target now generates UUID values where the source defaulted NULL; keep only if the PostgreSQL EF model is meant to generate the identifier"
+        return 1
+    fi
+
+    if [[ "$source_norm" == "null" && "$target_norm" == "sequential_uuid_default" ]]; then
+        DEFAULT_NOTE="Target now generates sequential UUID values where the source defaulted NULL; keep only if that behavior is intentional in PostgreSQL"
+        return 1
+    fi
+
+    if [[ "$source_norm" == "$target_norm" ]]; then
+        DEFAULT_NOTE="Normalized default expressions match"
+        return 0
+    fi
+
+    if [[ "$source_type_norm" == "bit" && "$target_type_norm" == "boolean" ]]; then
+        if [[ "$source_norm" == "0" && "$target_norm" == "0" ]] || [[ "$source_norm" == "1" && "$target_norm" == "1" ]]; then
+            DEFAULT_NOTE="Bit-to-boolean default maps correctly"
+            return 0
+        fi
+    fi
+
+    if [[ "$source_norm" == "current_timestamp" && "$target_norm" == "current_timestamp" ]]; then
+        DEFAULT_NOTE="Timestamp default maps correctly"
+        return 0
+    fi
+
+    if [[ "$source_norm" == "uuid_default" && "$target_norm" == "uuid_default" ]]; then
+        DEFAULT_NOTE="UUID default maps correctly"
+        return 0
+    fi
+
+    DEFAULT_NOTE="Default expressions differ after normalization"
+    return 1
+}
+
+record_optional_query_error() {
+    local output_file="$1"
+    local error_file="$2"
+
+    printf '__ERROR__\t%s\n' "$(tr '\n' ' ' <"$error_file" | sed -E 's/[[:space:]]+/ /g' | cut -c1-400)" >"$output_file"
+}
+
+query_error_message() {
+    local output_file="$1"
+    local marker message
+
+    if [[ ! -s "$output_file" ]]; then
+        return 1
+    fi
+
+    IFS=$'\t' read -r marker message <"$output_file" || return 1
+
+    if [[ "$marker" == "__ERROR__" ]]; then
+        printf '%s' "$message"
+        return 0
+    fi
+
+    return 1
+}
+
 simple_type_compatible() {
     local source_type target_type
 
@@ -1113,6 +1283,695 @@ write_column_section() {
     printf '| Columns/data types | %s | %d | Validates base-table columns against the pgloader mappings in `scripts/migrate-endpoint.sh` |\n' "$status" "$mismatches"
 }
 
+write_index_section() {
+    local report_sections="$1"
+    local source_file="$TMP_DIR/source-indexes.tsv"
+    local target_file="$TMP_DIR/target-indexes.tsv"
+    local -A source_index_name=() source_table=() source_key_columns=() source_included_columns=() source_filter=() source_type=()
+    local -A target_index_name=() target_table=() target_key_columns=() target_included_columns=() target_filter=() target_type=()
+    local source_count=0
+    local target_count=0
+    local mismatches=0
+    local total=0
+    local status="✅"
+    local table_name index_name key_columns included_columns is_unique filter_definition index_type key row_status note
+    local source_filter_norm target_filter_norm source_include_norm target_include_norm
+
+    while IFS=$'\t' read -r table_name index_name key_columns included_columns is_unique filter_definition index_type; do
+        [[ -z "${table_name:-}" || -z "${key_columns:-}" ]] && continue
+        key="$(normalize_qualified_name "$table_name")${KEY_SEPARATOR}$(normalize_identifier_list "$key_columns")${KEY_SEPARATOR}$is_unique"
+        source_index_name["$key"]="$index_name"
+        source_table["$key"]="$table_name"
+        source_key_columns["$key"]="$(normalize_identifier_list "$key_columns")"
+        source_included_columns["$key"]="$(normalize_identifier_list "$included_columns")"
+        source_filter["$key"]="$filter_definition"
+        source_type["$key"]="$index_type"
+        source_count=$((source_count + 1))
+    done <"$source_file"
+
+    while IFS=$'\t' read -r table_name index_name key_columns included_columns is_unique filter_definition index_type; do
+        [[ -z "${table_name:-}" || -z "${key_columns:-}" ]] && continue
+        key="$(normalize_qualified_name "$table_name")${KEY_SEPARATOR}$(normalize_identifier_list "$key_columns")${KEY_SEPARATOR}$is_unique"
+        target_index_name["$key"]="$index_name"
+        target_table["$key"]="$table_name"
+        target_key_columns["$key"]="$(normalize_identifier_list "$key_columns")"
+        target_included_columns["$key"]="$(normalize_identifier_list "$included_columns")"
+        target_filter["$key"]="$filter_definition"
+        target_type["$key"]="$index_type"
+        target_count=$((target_count + 1))
+    done <"$target_file"
+
+    {
+        echo "## Non-unique secondary indexes"
+        echo
+
+        if [[ "$source_count" -gt 0 && "$target_count" -eq 0 ]]; then
+            echo "No non-primary PostgreSQL indexes were found. If you only loaded data before applying the EF Core PostgreSQL schema, that may be expected; otherwise every source index is missing on the target."
+            echo
+        fi
+
+        echo "| Status | Table | Key columns | SQL Server index | PostgreSQL index | Detail |"
+        echo "|---|---|---|---|---|---|"
+
+        while IFS= read -r key; do
+            [[ -z "$key" ]] && continue
+            total=$((total + 1))
+
+            if [[ -z "${source_index_name[$key]:-}" ]]; then
+                row_status="✅"
+                note="Additional PostgreSQL-only index"
+            elif [[ -z "${target_index_name[$key]:-}" ]]; then
+                row_status="❌"
+                note="Non-unique source index missing on PostgreSQL"
+                mismatches=$((mismatches + 1))
+            else
+                source_filter_norm="$(normalize_filter_expression "${source_filter[$key]:-}")"
+                target_filter_norm="$(normalize_filter_expression "${target_filter[$key]:-}")"
+                source_include_norm="$(normalize_identifier_list "${source_included_columns[$key]:-}")"
+                target_include_norm="$(normalize_identifier_list "${target_included_columns[$key]:-}")"
+
+                if [[ "$source_filter_norm" != "$target_filter_norm" ]]; then
+                    row_status="❌"
+                    note="Index predicate differs after normalization"
+                    mismatches=$((mismatches + 1))
+                elif [[ "$source_include_norm" != "$target_include_norm" ]]; then
+                    row_status="✅"
+                    note="Key coverage matches; included columns differ"
+                else
+                    row_status="✅"
+                    note="Key coverage matches"
+                fi
+            fi
+
+            printf '| %s | `%s` | `%s` | `%s` | `%s` | %s |\n' \
+                "$row_status" \
+                "$(md_escape "${source_table[$key]:-${target_table[$key]}}")" \
+                "$(md_escape "${source_key_columns[$key]:-${target_key_columns[$key]}}")" \
+                "$(md_escape "${source_index_name[$key]:-n/a}")" \
+                "$(md_escape "${target_index_name[$key]:-n/a}")" \
+                "$(md_escape "$note")"
+        done < <(
+            {
+                printf '%s\n' "${!source_index_name[@]}"
+                printf '%s\n' "${!target_index_name[@]}"
+            } | awk 'NF && !seen[$0]++' | sort
+        )
+
+        if [[ "$total" -eq 0 ]]; then
+            echo "| N/A | n/a | n/a | n/a | n/a | No non-unique secondary indexes returned by either query |"
+            status="N/A"
+        elif [[ "$mismatches" -gt 0 ]]; then
+            status="❌"
+        fi
+
+        echo
+    } >>"$report_sections"
+
+    printf '| Non-unique secondary indexes | %s | %d | Highlights non-unique source indexes missing on PostgreSQL; unique indexes are compared in the separate unique-keys section |\n' "$status" "$mismatches"
+}
+
+write_unique_key_section() {
+    local report_sections="$1"
+    local source_file="$TMP_DIR/source-unique-keys.tsv"
+    local target_file="$TMP_DIR/target-unique-keys.tsv"
+    local -A source_object_name=() source_table=() source_key_columns=() source_filter=() source_type=()
+    local -A target_object_name=() target_table=() target_key_columns=() target_filter=() target_type=()
+    local mismatches=0
+    local total=0
+    local status="✅"
+    local table_name object_name key_columns filter_definition object_type key row_status note
+
+    while IFS=$'\t' read -r table_name object_name key_columns filter_definition object_type; do
+        [[ -z "${table_name:-}" || -z "${key_columns:-}" ]] && continue
+        key="$(normalize_qualified_name "$table_name")${KEY_SEPARATOR}$(normalize_identifier_list "$key_columns")"
+        source_object_name["$key"]="$object_name"
+        source_table["$key"]="$table_name"
+        source_key_columns["$key"]="$(normalize_identifier_list "$key_columns")"
+        source_filter["$key"]="$filter_definition"
+        source_type["$key"]="$object_type"
+    done <"$source_file"
+
+    while IFS=$'\t' read -r table_name object_name key_columns filter_definition object_type; do
+        [[ -z "${table_name:-}" || -z "${key_columns:-}" ]] && continue
+        key="$(normalize_qualified_name "$table_name")${KEY_SEPARATOR}$(normalize_identifier_list "$key_columns")"
+        target_object_name["$key"]="$object_name"
+        target_table["$key"]="$table_name"
+        target_key_columns["$key"]="$(normalize_identifier_list "$key_columns")"
+        target_filter["$key"]="$filter_definition"
+        target_type["$key"]="$object_type"
+    done <"$target_file"
+
+    {
+        echo "## Unique keys"
+        echo
+        echo "| Status | Table | Unique columns | SQL Server object | PostgreSQL object | Detail |"
+        echo "|---|---|---|---|---|---|"
+
+        while IFS= read -r key; do
+            [[ -z "$key" ]] && continue
+            total=$((total + 1))
+
+            if [[ -z "${source_object_name[$key]:-}" ]]; then
+                row_status="❌"
+                note="Unique key only present on PostgreSQL"
+                mismatches=$((mismatches + 1))
+            elif [[ -z "${target_object_name[$key]:-}" ]]; then
+                row_status="❌"
+                note="Unique key missing on PostgreSQL"
+                mismatches=$((mismatches + 1))
+            elif [[ "$(normalize_filter_expression "${source_filter[$key]:-}")" != "$(normalize_filter_expression "${target_filter[$key]:-}")" ]]; then
+                row_status="❌"
+                note="Unique key predicate differs after normalization"
+                mismatches=$((mismatches + 1))
+            else
+                row_status="✅"
+                note="Unique key coverage matches"
+            fi
+
+            printf '| %s | `%s` | `%s` | `%s` | `%s` | %s |\n' \
+                "$row_status" \
+                "$(md_escape "${source_table[$key]:-${target_table[$key]}}")" \
+                "$(md_escape "${source_key_columns[$key]:-${target_key_columns[$key]}}")" \
+                "$(md_escape "${source_object_name[$key]:-n/a}")" \
+                "$(md_escape "${target_object_name[$key]:-n/a}")" \
+                "$(md_escape "$note")"
+        done < <(
+            {
+                printf '%s\n' "${!source_object_name[@]}"
+                printf '%s\n' "${!target_object_name[@]}"
+            } | awk 'NF && !seen[$0]++' | sort
+        )
+
+        if [[ "$total" -eq 0 ]]; then
+            echo "| N/A | n/a | n/a | n/a | n/a | No non-primary unique keys returned by either query |"
+            status="N/A"
+        elif [[ "$mismatches" -gt 0 ]]; then
+            status="❌"
+        fi
+
+        echo
+    } >>"$report_sections"
+
+    printf '| Unique keys | %s | %d | Compares non-primary unique indexes/constraints by table and ordered key columns |\n' "$status" "$mismatches"
+}
+
+write_check_constraint_section() {
+    local report_sections="$1"
+    local source_file="$TMP_DIR/source-check-constraints.tsv"
+    local target_file="$TMP_DIR/target-check-constraints.tsv"
+    local -A source_name=() source_table=() source_expression=() source_disabled=()
+    local -A target_name=() target_table=() target_expression=() target_disabled=()
+    local mismatches=0
+    local total=0
+    local status="✅"
+    local table_name constraint_name check_expression is_disabled key row_status note
+
+    while IFS=$'\t' read -r table_name constraint_name check_expression is_disabled; do
+        [[ -z "${table_name:-}" || -z "${check_expression:-}" ]] && continue
+        key="$(normalize_qualified_name "$table_name")${KEY_SEPARATOR}$(normalize_check_expression "$check_expression")"
+        source_name["$key"]="$constraint_name"
+        source_table["$key"]="$table_name"
+        source_expression["$key"]="$check_expression"
+        source_disabled["$key"]="$is_disabled"
+    done <"$source_file"
+
+    while IFS=$'\t' read -r table_name constraint_name check_expression is_disabled; do
+        [[ -z "${table_name:-}" || -z "${check_expression:-}" ]] && continue
+        key="$(normalize_qualified_name "$table_name")${KEY_SEPARATOR}$(normalize_check_expression "$check_expression")"
+        target_name["$key"]="$constraint_name"
+        target_table["$key"]="$table_name"
+        target_expression["$key"]="$check_expression"
+        target_disabled["$key"]="$is_disabled"
+    done <"$target_file"
+
+    {
+        echo "## Check constraints"
+        echo
+        echo "| Status | Table | SQL Server constraint | PostgreSQL constraint | Detail |"
+        echo "|---|---|---|---|---|"
+
+        while IFS= read -r key; do
+            [[ -z "$key" ]] && continue
+            total=$((total + 1))
+
+            if [[ -z "${source_name[$key]:-}" ]]; then
+                row_status="❌"
+                note="Check constraint only present on PostgreSQL"
+                mismatches=$((mismatches + 1))
+            elif [[ -z "${target_name[$key]:-}" ]]; then
+                row_status="❌"
+                note="Check constraint missing on PostgreSQL"
+                mismatches=$((mismatches + 1))
+            elif [[ "${source_disabled[$key]}" != "${target_disabled[$key]}" ]]; then
+                row_status="❌"
+                note="Constraint validation/disable state differs"
+                mismatches=$((mismatches + 1))
+            else
+                row_status="✅"
+                note="Normalized check expression matches"
+            fi
+
+            printf '| %s | `%s` | `%s` | `%s` | %s |\n' \
+                "$row_status" \
+                "$(md_escape "${source_table[$key]:-${target_table[$key]}}")" \
+                "$(md_escape "${source_expression[$key]:-n/a}")" \
+                "$(md_escape "${target_expression[$key]:-n/a}")" \
+                "$(md_escape "$note")"
+        done < <(
+            {
+                printf '%s\n' "${!source_name[@]}"
+                printf '%s\n' "${!target_name[@]}"
+            } | awk 'NF && !seen[$0]++' | sort
+        )
+
+        if [[ "$total" -eq 0 ]]; then
+            echo "| N/A | n/a | n/a | n/a | No check constraints returned by either query |"
+            status="N/A"
+        elif [[ "$mismatches" -gt 0 ]]; then
+            status="❌"
+        fi
+
+        echo
+    } >>"$report_sections"
+
+    printf '| Check constraints | %s | %d | Compares normalized check expressions and whether the target constraints are validated |\n' "$status" "$mismatches"
+}
+
+write_default_section() {
+    local report_sections="$1"
+    local source_file="$TMP_DIR/source-defaults.tsv"
+    local target_file="$TMP_DIR/target-defaults.tsv"
+    local -A source_table=() source_column=() source_type=() source_expression=()
+    local -A target_table=() target_column=() target_type=() target_expression=()
+    local mismatches=0
+    local total=0
+    local status="✅"
+    local table_name column_name data_type default_expression _constraint_name key row_status note label
+
+    while IFS=$'\t' read -r table_name column_name data_type default_expression _constraint_name; do
+        [[ -z "${table_name:-}" || -z "${column_name:-}" ]] && continue
+        key="$(normalize_qualified_name "$table_name")${KEY_SEPARATOR}$column_name"
+        source_table["$key"]="$table_name"
+        source_column["$key"]="$column_name"
+        source_type["$key"]="$data_type"
+        source_expression["$key"]="$default_expression"
+    done <"$source_file"
+
+    while IFS=$'\t' read -r table_name column_name data_type default_expression; do
+        [[ -z "${table_name:-}" || -z "${column_name:-}" ]] && continue
+        key="$(normalize_qualified_name "$table_name")${KEY_SEPARATOR}$column_name"
+        target_table["$key"]="$table_name"
+        target_column["$key"]="$column_name"
+        target_type["$key"]="$data_type"
+        target_expression["$key"]="$default_expression"
+    done <"$target_file"
+
+    {
+        echo "## Default expressions"
+        echo
+        echo "| Status | Column | SQL Server default | PostgreSQL default | Detail |"
+        echo "|---|---|---|---|---|"
+
+        while IFS= read -r key; do
+            [[ -z "$key" ]] && continue
+            total=$((total + 1))
+            label="${source_table[$key]:-${target_table[$key]}}.${source_column[$key]:-${target_column[$key]}}"
+
+            if [[ -z "${source_expression[$key]:-}" ]]; then
+                row_status="❌"
+                note="Default only present on PostgreSQL"
+                mismatches=$((mismatches + 1))
+            elif [[ -z "${target_expression[$key]:-}" ]]; then
+                row_status="❌"
+                note="Default missing on PostgreSQL"
+                mismatches=$((mismatches + 1))
+            elif default_expression_compatible \
+                "${source_expression[$key]}" \
+                "${target_expression[$key]}" \
+                "${source_type[$key]}" \
+                "${target_type[$key]}"; then
+                row_status="✅"
+                note="$DEFAULT_NOTE"
+            else
+                row_status="❌"
+                note="$DEFAULT_NOTE"
+                mismatches=$((mismatches + 1))
+            fi
+
+            printf '| %s | `%s` | `%s` | `%s` | %s |\n' \
+                "$row_status" \
+                "$(md_escape "$label")" \
+                "$(md_escape "${source_expression[$key]:-n/a}")" \
+                "$(md_escape "${target_expression[$key]:-n/a}")" \
+                "$(md_escape "$note")"
+        done < <(
+            {
+                printf '%s\n' "${!source_expression[@]}"
+                printf '%s\n' "${!target_expression[@]}"
+            } | awk 'NF && !seen[$0]++' | sort
+        )
+
+        if [[ "$total" -eq 0 ]]; then
+            echo "| N/A | n/a | n/a | n/a | No non-identity defaults returned by either query |"
+            status="N/A"
+        elif [[ "$mismatches" -gt 0 ]]; then
+            status="❌"
+        fi
+
+        echo
+    } >>"$report_sections"
+
+    printf '| Default expressions | %s | %d | Compares non-identity defaults and highlights when PostgreSQL now auto-populates values that SQL Server left NULL |\n' "$status" "$mismatches"
+}
+
+write_sequence_health_section() {
+    local report_sections="$1"
+    local target_file="$TMP_DIR/target-sequence-health.tsv"
+    local mismatches=0
+    local total=0
+    local status="✅"
+    local table_name column_name sequence_name table_max_value sequence_last_value sequence_status row_status note error_message
+
+    if error_message="$(query_error_message "$target_file")"; then
+        {
+            echo "## Sequence health"
+            echo
+            echo "| Status | Detail |"
+            echo "|---|---|"
+            printf '| ❌ | %s |\n' "$(md_escape "$error_message")"
+            echo
+        } >>"$report_sections"
+        printf '| Sequence health | ❌ | 1 | Unable to evaluate PostgreSQL identity/sequence alignment |\n'
+        return
+    fi
+
+    {
+        echo "## Sequence health"
+        echo
+        echo "| Status | Column | Sequence | Table max | Sequence last value | Detail |"
+        echo "|---|---|---|---:|---:|---|"
+
+        while IFS=$'\t' read -r table_name column_name sequence_name table_max_value sequence_last_value sequence_status; do
+            [[ -z "${table_name:-}" || -z "${column_name:-}" ]] && continue
+            total=$((total + 1))
+
+            if [[ "$sequence_status" == "BEHIND" ]]; then
+                row_status="❌"
+                note="Sequence is behind table data; the next insert can collide"
+                mismatches=$((mismatches + 1))
+            else
+                row_status="✅"
+                note="Sequence is at or ahead of the current table max"
+            fi
+
+            printf '| %s | `%s.%s` | `%s` | %s | %s | %s |\n' \
+                "$row_status" \
+                "$(md_escape "$table_name")" \
+                "$(md_escape "$column_name")" \
+                "$(md_escape "$sequence_name")" \
+                "${table_max_value:-0}" \
+                "${sequence_last_value:-0}" \
+                "$(md_escape "$note")"
+        done <"$target_file"
+
+        if [[ "$total" -eq 0 ]]; then
+            echo "| N/A | n/a | n/a | n/a | n/a | No PostgreSQL sequences were associated with user tables |"
+            status="N/A"
+        elif [[ "$mismatches" -gt 0 ]]; then
+            status="❌"
+        fi
+
+        echo
+    } >>"$report_sections"
+
+    printf '| Sequence health | %s | %d | Checks that PostgreSQL identity/serial sequences are not behind the migrated data |\n' "$status" "$mismatches"
+}
+
+write_orphan_health_section() {
+    local report_sections="$1"
+    local source_file="$TMP_DIR/source-orphan-health.tsv"
+    local target_file="$TMP_DIR/target-orphan-health.tsv"
+    local -A source_child=() source_parent=() source_constraint=() source_fk_columns=() source_ref_columns=() source_count=()
+    local -A target_child=() target_parent=() target_constraint=() target_fk_columns=() target_ref_columns=() target_count=()
+    local introduced=0
+    local preexisting=0
+    local resolved=0
+    local total=0
+    local status="✅"
+    local child_table parent_table constraint_name fk_columns referenced_columns orphan_count row_status note source_error_message target_error_message key summary_note
+
+    source_error_message=""
+    target_error_message=""
+    if query_error_message "$source_file" >/dev/null; then
+        source_error_message="$(query_error_message "$source_file")"
+    fi
+    if query_error_message "$target_file" >/dev/null; then
+        target_error_message="$(query_error_message "$target_file")"
+    fi
+
+    if [[ -n "$source_error_message" || -n "$target_error_message" ]]; then
+        {
+            echo "## Orphan foreign-key health"
+            echo
+            echo "| Status | Endpoint | Detail |"
+            echo "|---|---|---|"
+            [[ -n "$source_error_message" ]] && printf '| ❌ | SQL Server | %s |\n' "$(md_escape "$source_error_message")"
+            [[ -n "$target_error_message" ]] && printf '| ❌ | PostgreSQL | %s |\n' "$(md_escape "$target_error_message")"
+            echo
+        } >>"$report_sections"
+        printf '| Orphan foreign-key health | ❌ | 1 | Unable to compare source and target orphan-row counts for every foreign-key relationship |\n'
+        return
+    fi
+
+    while IFS=$'\t' read -r child_table parent_table constraint_name fk_columns referenced_columns orphan_count; do
+        [[ -z "${child_table:-}" ]] && continue
+        key="$(normalize_qualified_name "$child_table")${KEY_SEPARATOR}$(normalize_qualified_name "$parent_table")${KEY_SEPARATOR}$(normalize_identifier_list "$fk_columns")${KEY_SEPARATOR}$(normalize_identifier_list "$referenced_columns")"
+        source_child["$key"]="$child_table"
+        source_parent["$key"]="$parent_table"
+        source_constraint["$key"]="$constraint_name"
+        source_fk_columns["$key"]="$(normalize_identifier_list "$fk_columns")"
+        source_ref_columns["$key"]="$(normalize_identifier_list "$referenced_columns")"
+        source_count["$key"]="${orphan_count:-0}"
+    done <"$source_file"
+
+    while IFS=$'\t' read -r child_table parent_table constraint_name fk_columns referenced_columns orphan_count; do
+        [[ -z "${child_table:-}" ]] && continue
+        key="$(normalize_qualified_name "$child_table")${KEY_SEPARATOR}$(normalize_qualified_name "$parent_table")${KEY_SEPARATOR}$(normalize_identifier_list "$fk_columns")${KEY_SEPARATOR}$(normalize_identifier_list "$referenced_columns")"
+        target_child["$key"]="$child_table"
+        target_parent["$key"]="$parent_table"
+        target_constraint["$key"]="$constraint_name"
+        target_fk_columns["$key"]="$(normalize_identifier_list "$fk_columns")"
+        target_ref_columns["$key"]="$(normalize_identifier_list "$referenced_columns")"
+        target_count["$key"]="${orphan_count:-0}"
+    done <"$target_file"
+
+    if [[ "${#source_count[@]}" -eq 0 && "${#target_count[@]}" -gt 0 ]]; then
+        {
+            echo "## Orphan foreign-key health"
+            echo
+            echo "| Status | Endpoint | Detail |"
+            echo "|---|---|---|"
+            echo "| ❌ | SQL Server | Source orphan baseline query returned no rows, so introduced-vs-pre-existing attribution is unavailable |"
+            echo
+        } >>"$report_sections"
+        printf '| Orphan foreign-key health | ❌ | 1 | Source orphan baseline query returned no rows, so introduced-vs-pre-existing attribution is unavailable |\n'
+        return
+    fi
+
+    {
+        echo "## Orphan foreign-key health"
+        echo
+        echo "| Status | Child table | Parent table | FK columns | SQL Server orphan rows | PostgreSQL orphan rows | Detail |"
+        echo "|---|---|---|---|---:|---:|---|"
+
+        while IFS= read -r key; do
+            [[ -z "$key" ]] && continue
+            total=$((total + 1))
+
+            local source_orphans="${source_count[$key]:-0}"
+            local target_orphans="${target_count[$key]:-0}"
+
+            if [[ "$source_orphans" -gt 0 && "$target_orphans" -gt 0 ]]; then
+                row_status="⚠️"
+                note="Already existed in source and still exists on PostgreSQL"
+                preexisting=$((preexisting + 1))
+            elif [[ "$source_orphans" -gt 0 && "$target_orphans" -eq 0 ]]; then
+                row_status="✅"
+                note="Pre-existing source issue is resolved on PostgreSQL"
+                resolved=$((resolved + 1))
+            elif [[ "$source_orphans" -eq 0 && "$target_orphans" -gt 0 ]]; then
+                row_status="❌"
+                note="Introduced on PostgreSQL"
+                introduced=$((introduced + 1))
+            else
+                row_status="✅"
+                note="No orphan rows on either side"
+            fi
+
+            printf '| %s | `%s` | `%s` | `%s` | %s | %s | %s |\n' \
+                "$row_status" \
+                "$(md_escape "${source_child[$key]:-${target_child[$key]}}")" \
+                "$(md_escape "${source_parent[$key]:-${target_parent[$key]}}")" \
+                "$(md_escape "${source_fk_columns[$key]:-${target_fk_columns[$key]}}") -> $(md_escape "${source_ref_columns[$key]:-${target_ref_columns[$key]}}")" \
+                "${source_orphans:-0}" \
+                "${target_orphans:-0}" \
+                "$(md_escape "$note")"
+        done < <(
+            {
+                printf '%s\n' "${!source_count[@]}"
+                printf '%s\n' "${!target_count[@]}"
+            } | awk 'NF && !seen[$0]++' | sort
+        )
+
+        if [[ "$total" -eq 0 ]]; then
+            echo "| N/A | n/a | n/a | n/a | n/a | n/a | No foreign-key health rows were returned by either endpoint |"
+            status="N/A"
+        elif [[ "$introduced" -gt 0 ]]; then
+            status="❌"
+        elif [[ "$preexisting" -gt 0 ]]; then
+            status="⚠️"
+        fi
+
+        echo
+    } >>"$report_sections"
+
+    summary_note="Introduced on PostgreSQL: $introduced; pre-existing in source: $preexisting; resolved on PostgreSQL: $resolved"
+    printf '| Orphan foreign-key health | %s | %d | %s |\n' "$status" "$introduced" "$summary_note"
+}
+
+write_duplicate_health_section() {
+    local report_sections="$1"
+    local source_file="$TMP_DIR/source-duplicate-health.tsv"
+    local target_file="$TMP_DIR/target-duplicate-health.tsv"
+    local -A source_table=() source_object_name=() source_object_type=() source_key_columns=() source_group_count=() source_row_count=()
+    local -A target_table=() target_object_name=() target_object_type=() target_key_columns=() target_group_count=() target_row_count=()
+    local introduced=0
+    local preexisting=0
+    local resolved=0
+    local total=0
+    local status="✅"
+    local table_name object_name object_type key_columns duplicate_group_count duplicate_row_count row_status note source_error_message target_error_message key summary_note
+
+    source_error_message=""
+    target_error_message=""
+    if query_error_message "$source_file" >/dev/null; then
+        source_error_message="$(query_error_message "$source_file")"
+    fi
+    if query_error_message "$target_file" >/dev/null; then
+        target_error_message="$(query_error_message "$target_file")"
+    fi
+
+    if [[ -n "$source_error_message" || -n "$target_error_message" ]]; then
+        {
+            echo "## Duplicate key health"
+            echo
+            echo "| Status | Endpoint | Detail |"
+            echo "|---|---|---|"
+            [[ -n "$source_error_message" ]] && printf '| ❌ | SQL Server | %s |\n' "$(md_escape "$source_error_message")"
+            [[ -n "$target_error_message" ]] && printf '| ❌ | PostgreSQL | %s |\n' "$(md_escape "$target_error_message")"
+            echo
+        } >>"$report_sections"
+        printf '| Duplicate key health | ❌ | 1 | Unable to compare source and target duplicate-group counts for primary/unique keys |\n'
+        return
+    fi
+
+    while IFS=$'\t' read -r table_name object_name object_type key_columns duplicate_group_count duplicate_row_count; do
+        [[ -z "${table_name:-}" ]] && continue
+        key="$(normalize_qualified_name "$table_name")${KEY_SEPARATOR}$(normalize_identifier_list "$key_columns")"
+        source_table["$key"]="$table_name"
+        source_object_name["$key"]="$object_name"
+        source_object_type["$key"]="$object_type"
+        source_key_columns["$key"]="$(normalize_identifier_list "$key_columns")"
+        source_group_count["$key"]="${duplicate_group_count:-0}"
+        source_row_count["$key"]="${duplicate_row_count:-0}"
+    done <"$source_file"
+
+    while IFS=$'\t' read -r table_name object_name object_type key_columns duplicate_group_count duplicate_row_count; do
+        [[ -z "${table_name:-}" ]] && continue
+        key="$(normalize_qualified_name "$table_name")${KEY_SEPARATOR}$(normalize_identifier_list "$key_columns")"
+        target_table["$key"]="$table_name"
+        target_object_name["$key"]="$object_name"
+        target_object_type["$key"]="$object_type"
+        target_key_columns["$key"]="$(normalize_identifier_list "$key_columns")"
+        target_group_count["$key"]="${duplicate_group_count:-0}"
+        target_row_count["$key"]="${duplicate_row_count:-0}"
+    done <"$target_file"
+
+    if [[ "${#source_group_count[@]}" -eq 0 && "${#target_group_count[@]}" -gt 0 ]]; then
+        {
+            echo "## Duplicate key health"
+            echo
+            echo "| Status | Endpoint | Detail |"
+            echo "|---|---|---|"
+            echo "| ❌ | SQL Server | Source duplicate baseline query returned no rows, so introduced-vs-pre-existing attribution is unavailable |"
+            echo
+        } >>"$report_sections"
+        printf '| Duplicate key health | ❌ | 1 | Source duplicate baseline query returned no rows, so introduced-vs-pre-existing attribution is unavailable |\n'
+        return
+    fi
+
+    {
+        echo "## Duplicate key health"
+        echo
+        echo "| Status | Table | Key object | Key columns | SQL Server duplicate groups | PostgreSQL duplicate groups | Detail |"
+        echo "|---|---|---|---|---:|---:|---|"
+
+        while IFS= read -r key; do
+            [[ -z "$key" ]] && continue
+            total=$((total + 1))
+
+            local source_groups="${source_group_count[$key]:-0}"
+            local target_groups="${target_group_count[$key]:-0}"
+
+            if [[ "$source_groups" -gt 0 && "$target_groups" -gt 0 ]]; then
+                row_status="⚠️"
+                note="Already existed in source and still exists on PostgreSQL"
+                preexisting=$((preexisting + 1))
+            elif [[ "$source_groups" -gt 0 && "$target_groups" -eq 0 ]]; then
+                row_status="✅"
+                note="Pre-existing source duplicate issue is resolved on PostgreSQL"
+                resolved=$((resolved + 1))
+            elif [[ "$source_groups" -eq 0 && "$target_groups" -gt 0 ]]; then
+                row_status="❌"
+                note="Introduced on PostgreSQL"
+                introduced=$((introduced + 1))
+            else
+                row_status="✅"
+                note="No duplicate groups on either side"
+            fi
+
+            printf '| %s | `%s` | `%s (%s)` | `%s` | %s | %s | %s |\n' \
+                "$row_status" \
+                "$(md_escape "${source_table[$key]:-${target_table[$key]}}")" \
+                "$(md_escape "${source_object_name[$key]:-${target_object_name[$key]}}")" \
+                "$(md_escape "${source_object_type[$key]:-${target_object_type[$key]}}")" \
+                "$(md_escape "${source_key_columns[$key]:-${target_key_columns[$key]}}")" \
+                "${source_groups:-0}" \
+                "${target_groups:-0}" \
+                "$(md_escape "$note")"
+        done < <(
+            {
+                printf '%s\n' "${!source_group_count[@]}"
+                printf '%s\n' "${!target_group_count[@]}"
+            } | awk 'NF && !seen[$0]++' | sort
+        )
+
+        if [[ "$total" -eq 0 ]]; then
+            echo "| N/A | n/a | n/a | n/a | n/a | n/a | No duplicate-health rows were returned by either endpoint |"
+            status="N/A"
+        elif [[ "$introduced" -gt 0 ]]; then
+            status="❌"
+        elif [[ "$preexisting" -gt 0 ]]; then
+            status="⚠️"
+        fi
+
+        echo
+    } >>"$report_sections"
+
+    summary_note="Introduced on PostgreSQL: $introduced; pre-existing in source: $preexisting; resolved on PostgreSQL: $resolved"
+    printf '| Duplicate key health | %s | %d | %s |\n' "$status" "$introduced" "$summary_note"
+}
+
 generate_validation_report() {
     local source_error_file="$TMP_DIR/source-errors.log"
     local target_error_file="$TMP_DIR/target-errors.log"
@@ -1167,11 +2026,51 @@ generate_validation_report() {
         if ! run_psql_query "$REPO_ROOT/tests/row-count-comparison/psql-functions.sql" "$TMP_DIR/target-functions.tsv" "$target_error_file"; then
             query_failed=1
         fi
+        if ! run_tsql_query "$REPO_ROOT/tests/row-count-comparison/mssql-indexes.sql" "$TMP_DIR/source-indexes.tsv" "$source_error_file"; then
+            query_failed=1
+        fi
+        if ! run_psql_query "$REPO_ROOT/tests/row-count-comparison/psql-indexes.sql" "$TMP_DIR/target-indexes.tsv" "$target_error_file"; then
+            query_failed=1
+        fi
+        if ! run_tsql_query "$REPO_ROOT/tests/row-count-comparison/mssql-unique-keys.sql" "$TMP_DIR/source-unique-keys.tsv" "$source_error_file"; then
+            query_failed=1
+        fi
+        if ! run_psql_query "$REPO_ROOT/tests/row-count-comparison/psql-unique-keys.sql" "$TMP_DIR/target-unique-keys.tsv" "$target_error_file"; then
+            query_failed=1
+        fi
+        if ! run_tsql_query "$REPO_ROOT/tests/row-count-comparison/mssql-check-constraints.sql" "$TMP_DIR/source-check-constraints.tsv" "$source_error_file"; then
+            query_failed=1
+        fi
+        if ! run_psql_query "$REPO_ROOT/tests/row-count-comparison/psql-check-constraints.sql" "$TMP_DIR/target-check-constraints.tsv" "$target_error_file"; then
+            query_failed=1
+        fi
+        if ! run_tsql_query "$REPO_ROOT/tests/row-count-comparison/mssql-defaults.sql" "$TMP_DIR/source-defaults.tsv" "$source_error_file"; then
+            query_failed=1
+        fi
+        if ! run_psql_query "$REPO_ROOT/tests/row-count-comparison/psql-defaults.sql" "$TMP_DIR/target-defaults.tsv" "$target_error_file"; then
+            query_failed=1
+        fi
     fi
 
     if [[ "$query_failed" -ne 0 ]]; then
         write_query_failure_report "$source_error_file" "$target_error_file"
         return 1
+    fi
+
+    if ! run_psql_query "$REPO_ROOT/tests/row-count-comparison/psql-sequence-health.sql" "$TMP_DIR/target-sequence-health.tsv" "$TMP_DIR/target-sequence-health-errors.log"; then
+        record_optional_query_error "$TMP_DIR/target-sequence-health.tsv" "$TMP_DIR/target-sequence-health-errors.log"
+    fi
+    if ! run_tsql_query "$REPO_ROOT/tests/row-count-comparison/mssql-orphan-health.sql" "$TMP_DIR/source-orphan-health.tsv" "$TMP_DIR/source-orphan-health-errors.log"; then
+        record_optional_query_error "$TMP_DIR/source-orphan-health.tsv" "$TMP_DIR/source-orphan-health-errors.log"
+    fi
+    if ! run_psql_query "$REPO_ROOT/tests/row-count-comparison/psql-orphan-health.sql" "$TMP_DIR/target-orphan-health.tsv" "$TMP_DIR/target-orphan-health-errors.log"; then
+        record_optional_query_error "$TMP_DIR/target-orphan-health.tsv" "$TMP_DIR/target-orphan-health-errors.log"
+    fi
+    if ! run_tsql_query "$REPO_ROOT/tests/row-count-comparison/mssql-duplicate-health.sql" "$TMP_DIR/source-duplicate-health.tsv" "$TMP_DIR/source-duplicate-health-errors.log"; then
+        record_optional_query_error "$TMP_DIR/source-duplicate-health.tsv" "$TMP_DIR/source-duplicate-health-errors.log"
+    fi
+    if ! run_psql_query "$REPO_ROOT/tests/row-count-comparison/psql-duplicate-health.sql" "$TMP_DIR/target-duplicate-health.tsv" "$TMP_DIR/target-duplicate-health-errors.log"; then
+        record_optional_query_error "$TMP_DIR/target-duplicate-health.tsv" "$TMP_DIR/target-duplicate-health-errors.log"
     fi
 
     : >"$report_sections"
@@ -1180,9 +2079,16 @@ generate_validation_report() {
     write_rows_section "$report_sections" >>"$summary_rows"
     write_primary_key_section "$report_sections" >>"$summary_rows"
     write_foreign_key_section "$report_sections" >>"$summary_rows"
+    write_index_section "$report_sections" >>"$summary_rows"
+    write_unique_key_section "$report_sections" >>"$summary_rows"
+    write_check_constraint_section "$report_sections" >>"$summary_rows"
+    write_default_section "$report_sections" >>"$summary_rows"
     write_view_section "$report_sections" >>"$summary_rows"
     write_function_section "$report_sections" >>"$summary_rows"
     write_column_section "$report_sections" >>"$summary_rows"
+    write_sequence_health_section "$report_sections" >>"$summary_rows"
+    write_orphan_health_section "$report_sections" >>"$summary_rows"
+    write_duplicate_health_section "$report_sections" >>"$summary_rows"
 
     {
         echo "# Phase 3: Validation Report"
@@ -1248,21 +2154,46 @@ echo "Iteration: $ITERATION"
 echo "Report: $REPORT_FILE"
 echo ""
 
-if command -v PGprove &>/dev/null; then
-    echo "[1/3] Running security tests..."
-    PGprove "${PGPROVE_ARGS[@]}" tests/security/t/*.sql --verbose 2>&1
+if command -v pg_prove &>/dev/null; then
+    echo "[1/4] Running pgTAP application tests..."
+    set +e
+    pg_prove "${PGPROVE_ARGS[@]}" tests/pgtap/t/*.sql --verbose 2>&1
+    pgtap_exit_code=$?
+    set -e
+
+    if [[ "$pgtap_exit_code" -ne 0 ]]; then
+        echo "  pgTAP application tests failed - continuing with the rest of validation"
+    fi
+
+    echo "[2/4] Running security tests..."
+    set +e
+    pg_prove "${PGPROVE_ARGS[@]}" tests/security/t/*.sql --verbose 2>&1
+    security_exit_code=$?
+    set -e
+
+    if [[ "$security_exit_code" -ne 0 ]]; then
+        echo "  Security tests failed - continuing with structural validation report generation"
+    fi
 else
-    echo "[1/3] PGprove not found - skipping security tests"
+    echo "[1/4] pg_prove not found - skipping pgTAP application tests"
+    echo "[2/4] pg_prove not found - skipping security tests"
 fi
 
-echo "[2/3] Running performance tests..."
+echo "[3/4] Running performance tests..."
 if [[ -f tests/performance/run-performance-tests.sh ]]; then
+    set +e
     bash tests/performance/run-performance-tests.sh "$DATABASE" "$ITERATION" 2>&1
+    performance_exit_code=$?
+    set -e
+
+    if [[ "$performance_exit_code" -ne 0 ]]; then
+        echo "  Performance tests failed - continuing with structural validation report generation"
+    fi
 else
     echo "  Performance test runner not found"
 fi
 
-echo "[3/3] Comparing source and target metadata..."
+echo "[4/4] Comparing source and target metadata..."
 generate_validation_report
 
 echo ""

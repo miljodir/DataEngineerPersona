@@ -1,20 +1,30 @@
 SELECT
-    r.routine_schema || '.' || r.routine_name AS routine_name,
-    COUNT(p.parameter_name) FILTER (WHERE p.ordinal_position > 0)::text AS parameter_count,
+    n.nspname || '.' || p.proname AS routine_name,
+    COUNT(arg.arg_oid)::text AS parameter_count,
     COALESCE(
         string_agg(
-            COALESCE(NULLIF(p.data_type, 'USER-DEFINED'), p.udt_name),
+            format_type(arg.arg_oid, NULL),
             ', '
-            ORDER BY p.ordinal_position
-        ) FILTER (WHERE p.ordinal_position > 0),
+            ORDER BY arg.ordinality
+        ),
         ''
     ) AS parameter_types,
-    COALESCE(NULLIF(r.data_type, 'USER-DEFINED'), r.type_udt_name, '') AS return_type
-FROM information_schema.routines AS r
-LEFT JOIN information_schema.parameters AS p
-    ON p.specific_schema = r.specific_schema
-   AND p.specific_name = r.specific_name
-WHERE r.routine_schema NOT IN ('pg_catalog', 'information_schema')
-  AND r.routine_type = 'FUNCTION'
-GROUP BY r.routine_schema, r.routine_name, r.specific_name, r.data_type, r.type_udt_name
+    pg_get_function_result(p.oid) AS return_type
+FROM pg_proc AS p
+JOIN pg_namespace AS n
+    ON n.oid = p.pronamespace
+LEFT JOIN LATERAL unnest(COALESCE(p.proargtypes::oid[], ARRAY[]::oid[])) WITH ORDINALITY AS arg(arg_oid, ordinality)
+    ON true
+WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND p.prokind = 'f'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM pg_depend AS dep
+      JOIN pg_extension AS ext
+          ON ext.oid = dep.refobjid
+      WHERE dep.classid = 'pg_proc'::regclass
+        AND dep.objid = p.oid
+        AND dep.deptype = 'e'
+  )
+GROUP BY n.nspname, p.proname, p.oid
 ORDER BY routine_name, parameter_count;

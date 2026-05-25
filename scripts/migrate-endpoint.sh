@@ -23,7 +23,6 @@
 set -euo pipefail
 
 export SSL_CERT_FILE=/mnt/c/appl/repos/DataEngineerPersona/server-ca.pem
-export TDS_MAX_CONN=100
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

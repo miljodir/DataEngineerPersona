@@ -9,7 +9,7 @@
 #
 # Connection strings come from .env. Required:
 #   SQLSERVER_HOST, SQLSERVER_PORT, SQLSERVER_DB, SQLSERVER_USER, SQLSERVER_PASSWORD
-#   PG_HOST,        PG_PORT,        PG_DB,        PG_USER,        PG_PASSWORD
+#   PGHOST,        PGPORT,        PGDATABASE,        PGUSER,        PGPASSWORD
 #
 # Usage:
 #   wsl zsh -c "scripts/migrate-endpoint.sh"                     # full migration
@@ -80,11 +80,11 @@ fi
 : "${SQLSERVER_USER:=sa}"
 : "${SQLSERVER_PASSWORD:?SQLSERVER_PASSWORD is required (set in .env)}"
 
-: "${PG_HOST:?PG_HOST is required (set in .env)}"
-: "${PG_PORT:=5432}"
-: "${PG_DB:?PG_DB is required (set in .env)}"
-: "${PG_USER:?PG_USER is required (set in .env)}"
-: "${PG_PASSWORD:?PG_PASSWORD is required (set in .env)}"
+: "${PGHOST:?PGHOST is required (set in .env)}"
+: "${PGPORT:=5432}"
+: "${PGDATABASE:?PGDATABASE is required (set in .env)}"
+: "${PGUSER:?PGUSER is required (set in .env)}"
+: "${PGPASSWORD:?PGPASSWORD is required (set in .env)}"
 
 # Map the common .env names (set by .env.example for the demo) to BYO names
 # This lets demo defaults like SA_PASSWORD work when SQLSERVER_PASSWORD is unset.
@@ -99,7 +99,7 @@ echo "  SQL Server → PostgreSQL (BYO endpoint)"
 echo "============================================="
 echo ""
 echo "  Source: $SQLSERVER_USER@$SQLSERVER_HOST:$SQLSERVER_PORT/$SQLSERVER_DB"
-echo "  Target: $PG_USER@$PG_HOST:$PG_PORT/$PG_DB"
+echo "  Target: $PGUSER@$PGHOST:$PGPORT/$PGDATABASE"
 echo ""
 
 # ------------------------------------------------------------------
@@ -112,10 +112,10 @@ pgloader() {
 }
 
 psql_target() {
-  PGPASSWORD="$PG_PASSWORD" psql \
+  PGPASSWORD="$PGPASSWORD" psql \
     -X \
     -v ON_ERROR_STOP=1 \
-    -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DB" \
+    -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
     "$@"
 }
 
@@ -152,7 +152,7 @@ cleanup() {
     echo "Restoring target foreign keys after interrupted load..."
     if ! psql_target -1 -f "$TARGET_FK_RESTORE_SQL" >/dev/null; then
       echo "WARNING: Failed to restore target foreign keys automatically." >&2
-      echo "         Reapply them manually with: psql -h \"$PG_HOST\" -p \"$PG_PORT\" -U \"$PG_USER\" -d \"$PG_DB\" -f \"$TARGET_FK_RESTORE_SQL\"" >&2
+      echo "         Reapply them manually with: psql -h \"$PGHOST\" -p \"$PGPORT\" -U \"$PGUSER\" -d \"$PGDATABASE\" -f \"$TARGET_FK_RESTORE_SQL\"" >&2
     fi
   fi
 
@@ -261,13 +261,13 @@ fi
 
 # URL-encode the SQL Server password (pgloader connection URI safe)
 SQLSERVER_PASSWORD_ENC="$(printf '%s' "$SQLSERVER_PASSWORD" | sed -e 's/@/%40/g' -e 's/:/%3A/g' -e 's/\//%2F/g' -e 's/?/%3F/g' -e 's/#/%23/g' -e 's/!/%21/g')"
-PG_PASSWORD_ENC="$(printf '%s' "$PG_PASSWORD" | sed -e 's/@/%40/g' -e 's/:/%3A/g' -e 's/\//%2F/g' -e 's/?/%3F/g' -e 's/#/%23/g' -e 's/!/%21/g')"
+PGPASSWORD_ENC="$(printf '%s' "$PGPASSWORD" | sed -e 's/@/%40/g' -e 's/:/%3A/g' -e 's/\//%2F/g' -e 's/?/%3F/g' -e 's/#/%23/g' -e 's/!/%21/g')"
 
 
 cat > "$PGLOADER_CONF" <<EOF
 LOAD DATABASE
      FROM mssql://$SQLSERVER_USER:$SQLSERVER_PASSWORD_ENC@$SQLSERVER_HOST:$SQLSERVER_PORT/$SQLSERVER_DB
-     INTO postgresql://$PG_USER:$PG_PASSWORD_ENC@$PG_HOST:$PG_PORT/$PG_DB?sslmode=disable
+     INTO postgresql://$PGUSER:$PGPASSWORD_ENC@$PGHOST:$PGPORT/$PGDATABASE?sslmode=disable
      ALTER SCHEMA 'dbo' RENAME TO 'public'
 
  WITH $WITH_OPTIONS
@@ -350,7 +350,7 @@ else
 fi
 echo ""
 echo "  Next steps:"
-echo "    1. Run pgtap tests:         pg_prove -d \"postgresql://$PG_USER@$PG_HOST/$PG_DB\" tests/pgtap/t/"
+echo "    1. Run pgtap tests:         pg_prove -d \"postgresql://$PGUSER@$PGHOST/$PGDATABASE\" tests/pgtap/t/"
 echo "    2. Run row-count compare:   psql ... -f tests/row-count-comparison/compare.sql"
 echo "    3. Use the agent in Copilot Chat: /db-migrate"
 echo ""

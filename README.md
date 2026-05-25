@@ -211,7 +211,7 @@ sql-to-postgres-migration/
 │   ├── pgtap/                    # PL/pgSQL functional equivalence tests
 │   ├── security/                 # 10 security tests (sec-001..010)
 │   ├── performance/              # 10 perf tests (perf-001..010)
-│   └── row-count-comparison/     # Source ↔ target row count validation
+│   └── row-count-comparison/     # Source ↔ target validation queries and metadata checks
 ├── benchmarks/hammerdb/          # TPC-C scripts (both SQL and PG)
 ├── benchmarks/pgbench/           # pgbench load test
 ├── reference/
@@ -339,4 +339,4 @@ cloud-sql-proxy removes the need for explicit ssl settings. It is also possible 
 ./scripts/migrate-endpoint.sh
 ./scripts/validate-migration.sh --database xx --connection-string "hostaddr=127.0.0.1 port=5432 user=... password=... dbname=..."
 
-`validate-migration.sh` now compares source SQL Server metadata and target PostgreSQL metadata for row counts, primary keys, foreign keys, views, functions, and column type mappings, then regenerates `docs/03-validation-report.md`.
+`validate-migration.sh` now compares source SQL Server metadata and target PostgreSQL metadata for row counts, keys, indexes, check/default constraints, views, functions, and column type mappings, plus PostgreSQL sequence/orphan/duplicate health checks, then regenerates `docs/03-validation-report.md`.

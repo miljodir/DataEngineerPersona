@@ -261,6 +261,7 @@ normalize_default_expression() {
 }
 
 DEFAULT_NOTE=""
+DEFAULT_SEVERITY="ok"
 
 default_expression_compatible() {
     local source_default="$1"
@@ -269,6 +270,7 @@ default_expression_compatible() {
     local target_type="$4"
     local source_norm target_norm source_type_norm target_type_norm
 
+    DEFAULT_SEVERITY="ok"
     source_norm="$(normalize_default_expression "$source_default")"
     target_norm="$(normalize_default_expression "$target_default")"
     source_type_norm="$(to_lower "$(trim "$source_type")")"
@@ -279,29 +281,39 @@ default_expression_compatible() {
         return 0
     fi
 
+    if [[ "$source_norm" == "null" && -z "$target_norm" ]] || [[ -z "$source_norm" && "$target_norm" == "null" ]]; then
+        DEFAULT_NOTE="Explicit NULL default and no default are behaviorally equivalent"
+        return 0
+    fi
+
     if [[ -z "$source_norm" || -z "$target_norm" ]]; then
         DEFAULT_NOTE="Default presence differs"
+        DEFAULT_SEVERITY="error"
         return 1
     fi
 
     if [[ "$source_norm" == "null" && "$target_norm" == "current_timestamp" ]]; then
         DEFAULT_NOTE="Target now auto-populates CURRENT_TIMESTAMP where the source defaulted NULL; fix only if that insert-time behavior was not intentional in the PostgreSQL model"
-        return 1
+        DEFAULT_SEVERITY="review"
+        return 0
     fi
 
     if [[ "$source_norm" == "null" && "$target_norm" == "0" ]]; then
         DEFAULT_NOTE="Target now supplies a zero/false default where the source defaulted NULL; fix only if omitted inserts should continue storing NULL"
-        return 1
+        DEFAULT_SEVERITY="review"
+        return 0
     fi
 
     if [[ "$source_norm" == "null" && "$target_norm" == "uuid_default" ]]; then
         DEFAULT_NOTE="Target now generates UUID values where the source defaulted NULL; keep only if the PostgreSQL EF model is meant to generate the identifier"
-        return 1
+        DEFAULT_SEVERITY="review"
+        return 0
     fi
 
     if [[ "$source_norm" == "null" && "$target_norm" == "sequential_uuid_default" ]]; then
         DEFAULT_NOTE="Target now generates sequential UUID values where the source defaulted NULL; keep only if that behavior is intentional in PostgreSQL"
-        return 1
+        DEFAULT_SEVERITY="review"
+        return 0
     fi
 
     if [[ "$source_norm" == "$target_norm" ]]; then
@@ -327,6 +339,7 @@ default_expression_compatible() {
     fi
 
     DEFAULT_NOTE="Default expressions differ after normalization"
+    DEFAULT_SEVERITY="error"
     return 1
 }
 
@@ -1564,6 +1577,7 @@ write_default_section() {
     local -A source_table=() source_column=() source_type=() source_expression=()
     local -A target_table=() target_column=() target_type=() target_expression=()
     local mismatches=0
+    local reviews=0
     local total=0
     local status="✅"
     local table_name column_name data_type default_expression _constraint_name key row_status note label
@@ -1589,6 +1603,8 @@ write_default_section() {
     {
         echo "## Default expressions"
         echo
+        echo 'Only insert-time behavior changes are treated as review items here. Explicit `DEFAULT NULL` and no default are treated as equivalent.'
+        echo
         echo "| Status | Column | SQL Server default | PostgreSQL default | Detail |"
         echo "|---|---|---|---|---|"
 
@@ -1597,21 +1613,22 @@ write_default_section() {
             total=$((total + 1))
             label="${source_table[$key]:-${target_table[$key]}}.${source_column[$key]:-${target_column[$key]}}"
 
-            if [[ -z "${source_expression[$key]:-}" ]]; then
-                row_status="❌"
-                note="Default only present on PostgreSQL"
-                mismatches=$((mismatches + 1))
-            elif [[ -z "${target_expression[$key]:-}" ]]; then
-                row_status="❌"
-                note="Default missing on PostgreSQL"
-                mismatches=$((mismatches + 1))
-            elif default_expression_compatible \
-                "${source_expression[$key]}" \
-                "${target_expression[$key]}" \
-                "${source_type[$key]}" \
-                "${target_type[$key]}"; then
-                row_status="✅"
-                note="$DEFAULT_NOTE"
+            if default_expression_compatible \
+                "${source_expression[$key]:-}" \
+                "${target_expression[$key]:-}" \
+                "${source_type[$key]:-}" \
+                "${target_type[$key]:-}"; then
+                case "$DEFAULT_SEVERITY" in
+                    review)
+                        row_status="⚠️"
+                        note="$DEFAULT_NOTE"
+                        reviews=$((reviews + 1))
+                        ;;
+                    *)
+                        row_status="✅"
+                        note="$DEFAULT_NOTE"
+                        ;;
+                esac
             else
                 row_status="❌"
                 note="$DEFAULT_NOTE"
@@ -1636,12 +1653,14 @@ write_default_section() {
             status="N/A"
         elif [[ "$mismatches" -gt 0 ]]; then
             status="❌"
+        elif [[ "$reviews" -gt 0 ]]; then
+            status="⚠️"
         fi
 
         echo
     } >>"$report_sections"
 
-    printf '| Default expressions | %s | %d | Compares non-identity defaults and highlights when PostgreSQL now auto-populates values that SQL Server left NULL |\n' "$status" "$mismatches"
+    printf '| Default expressions | %s | %d | Hard mismatches: %d; review-only behavior changes: %d |\n' "$status" "$((mismatches + reviews))" "$mismatches" "$reviews"
 }
 
 write_sequence_health_section() {

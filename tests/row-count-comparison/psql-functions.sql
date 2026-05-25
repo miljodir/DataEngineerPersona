@@ -1,4 +1,3 @@
--- Verify migrated PostgreSQL functions with comparable signatures.
 SELECT
     r.routine_schema || '.' || r.routine_name AS routine_name,
     COUNT(p.parameter_name) FILTER (WHERE p.ordinal_position > 0)::text AS parameter_count,

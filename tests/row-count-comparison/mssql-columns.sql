@@ -1,0 +1,26 @@
+SET NOCOUNT ON;
+
+SELECT
+    c.TABLE_SCHEMA + '.' + c.TABLE_NAME AS table_name,
+    c.COLUMN_NAME,
+    c.DATA_TYPE,
+    COALESCE(CAST(c.CHARACTER_MAXIMUM_LENGTH AS varchar(20)), '') AS character_maximum_length,
+    COALESCE(CAST(c.NUMERIC_PRECISION AS varchar(20)), '') AS numeric_precision,
+    COALESCE(CAST(c.NUMERIC_SCALE AS varchar(20)), '') AS numeric_scale,
+    COALESCE(CAST(c.DATETIME_PRECISION AS varchar(20)), '') AS datetime_precision,
+    c.IS_NULLABLE,
+    CASE
+        WHEN COLUMNPROPERTY(
+            OBJECT_ID(QUOTENAME(c.TABLE_SCHEMA) + '.' + QUOTENAME(c.TABLE_NAME)),
+            c.COLUMN_NAME,
+            'IsIdentity'
+        ) = 1 THEN 'YES'
+        ELSE 'NO'
+    END AS is_identity
+FROM INFORMATION_SCHEMA.COLUMNS AS c
+JOIN INFORMATION_SCHEMA.TABLES AS t
+    ON t.TABLE_SCHEMA = c.TABLE_SCHEMA
+   AND t.TABLE_NAME = c.TABLE_NAME
+WHERE c.TABLE_SCHEMA NOT IN ('sys', 'INFORMATION_SCHEMA')
+  AND t.TABLE_TYPE = 'BASE TABLE'
+ORDER BY c.TABLE_SCHEMA, c.TABLE_NAME, c.ORDINAL_POSITION;

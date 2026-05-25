@@ -12,9 +12,12 @@
 #   PG_HOST,        PG_PORT,        PG_DB,        PG_USER,        PG_PASSWORD
 #
 # Usage:
-#   wsl zsh -c "scripts/migrate-endpoint.sh"                  # full migration
-#   wsl zsh -c "scripts/migrate-endpoint.sh --dry-run"        # validate only
-#   wsl zsh -c "scripts/migrate-endpoint.sh --schema-only"    # tables/views only
+#   wsl zsh -c "scripts/migrate-endpoint.sh"                     # full migration
+#   wsl zsh -c "scripts/migrate-endpoint.sh --dry-run"           # validate only
+#   wsl zsh -c "scripts/migrate-endpoint.sh --schema-only"       # tables/views only
+#   wsl zsh -c "scripts/migrate-endpoint.sh --data-only"         # data only into existing target schema
+#   wsl zsh -c "scripts/migrate-endpoint.sh --with-foreign-keys" # opt in to pgloader FK DDL
+#   wsl zsh -c "scripts/migrate-endpoint.sh --uniquify-index-names" # add pgloader idx_<oid>_ prefix
 # =============================================================================
 
 set -euo pipefail
@@ -42,11 +45,19 @@ fi
 # ------------------------------------------------------------------
 DRY_RUN=false
 SCHEMA_ONLY=false
+DATA_ONLY=true
+CREATE_FOREIGN_KEYS=false
+# PGLOADER will always uniqify index names for PKs but seem to respect this for FKs
+# Ref https://github.com/dimitri/pgloader/issues/1257
+UNIQUIFY_INDEX_NAMES=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --dry-run)     DRY_RUN=true; shift ;;
         --schema-only) SCHEMA_ONLY=true; shift ;;
+        --data-only)   DATA_ONLY=true; shift ;;
+        --with-foreign-keys) CREATE_FOREIGN_KEYS=true; shift ;;
+        --uniquify-index-names) UNIQUIFY_INDEX_NAMES=true; shift ;;
         -h|--help)
             sed -n '1,20p' "$0"
             exit 0
@@ -54,6 +65,11 @@ while [[ $# -gt 0 ]]; do
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
+
+if [ "$SCHEMA_ONLY" = true ] && [ "$DATA_ONLY" = true ]; then
+  echo "ERROR: --schema-only and --data-only are mutually exclusive." >&2
+  exit 1
+fi
 
 # ------------------------------------------------------------------
 # Resolve connection variables
@@ -74,6 +90,9 @@ done
 # This lets demo defaults like SA_PASSWORD work when SQLSERVER_PASSWORD is unset.
 SQLSERVER_PASSWORD="${SQLSERVER_PASSWORD:-${SA_PASSWORD:-}}"
 
+
+EXCLUDE_CLAUSE=" EXCLUDING TABLE NAMES LIKE 'Language', '__EFMigrationsHistory' IN SCHEMA 'dbo'"
+
 echo ""
 echo "============================================="
 echo "  SQL Server → PostgreSQL (BYO endpoint)"
@@ -87,9 +106,17 @@ echo ""
 # Preflight: pgloader installed?
 # ------------------------------------------------------------------
 pgloader() {
-  podman run --rm --network=host -v /tmp:/tmp -e TDSDUMP=/tmp/pgloader/freetds.log -e TDSVER=8.0 --name pgloader -i \
+  podman run --rm --network=host -v /tmp:/tmp -e TDSDUMP=/tmp/pgloader/freetds.log -e TDSVER=8.0 -e TDS_MAX_CONN=100 --name pgloader -i \
     docker.io/esbalo/pgloader:1.0.0 \
     pgloader "$@"
+}
+
+psql_target() {
+  PGPASSWORD="$PG_PASSWORD" psql \
+    -X \
+    -v ON_ERROR_STOP=1 \
+    -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DB" \
+    "$@"
 }
 
 if ! command -v pgloader >/dev/null 2>&1; then
@@ -109,26 +136,143 @@ fi
 # Generate pgloader config from template
 # ------------------------------------------------------------------
 TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
 PGLOADER_CONF="$TMP_DIR/migration.load"
+TARGET_FK_DROP_SQL="$TMP_DIR/target-fks.drop.sql"
+TARGET_FK_RESTORE_SQL="$TMP_DIR/target-fks.restore.sql"
+TARGET_FK_VALIDATE_SQL="$TMP_DIR/target-fks.validate.sql"
+TARGET_FK_COUNT=0
+TARGET_FKS_DROPPED=false
 export TDSVER=8.0
 
-INCLUDE_DATA="INCLUDING ONLY TABLE NAMES MATCHING ~/./"
+cleanup() {
+  local exit_code=$?
+
+  if [ "$TARGET_FKS_DROPPED" = true ] && [ -s "$TARGET_FK_RESTORE_SQL" ]; then
+    echo ""
+    echo "Restoring target foreign keys after interrupted load..."
+    if ! psql_target -1 -f "$TARGET_FK_RESTORE_SQL" >/dev/null; then
+      echo "WARNING: Failed to restore target foreign keys automatically." >&2
+      echo "         Reapply them manually with: psql -h \"$PG_HOST\" -p \"$PG_PORT\" -U \"$PG_USER\" -d \"$PG_DB\" -f \"$TARGET_FK_RESTORE_SQL\"" >&2
+    fi
+  fi
+
+  rm -rf "$TMP_DIR"
+  exit "$exit_code"
+}
+
+trap cleanup EXIT
+
+prepare_target_foreign_keys() {
+  psql_target -At <<'SQL' > "$TARGET_FK_DROP_SQL"
+SELECT format(
+         'ALTER TABLE %I.%I DROP CONSTRAINT %I;',
+         nsp.nspname,
+         rel.relname,
+         con.conname
+       )
+FROM pg_constraint con
+JOIN pg_class rel ON rel.oid = con.conrelid
+JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+WHERE con.contype = 'f'
+  AND nsp.nspname = 'public'
+ORDER BY rel.relname, con.conname;
+SQL
+
+  psql_target -At <<'SQL' > "$TARGET_FK_RESTORE_SQL"
+SELECT format(
+         'ALTER TABLE %I.%I ADD CONSTRAINT %I %s NOT VALID;',
+         nsp.nspname,
+         rel.relname,
+         con.conname,
+         pg_get_constraintdef(con.oid)
+       )
+FROM pg_constraint con
+JOIN pg_class rel ON rel.oid = con.conrelid
+JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+WHERE con.contype = 'f'
+  AND nsp.nspname = 'public'
+ORDER BY rel.relname, con.conname;
+SQL
+
+  psql_target -At <<'SQL' > "$TARGET_FK_VALIDATE_SQL"
+SELECT format(
+         'ALTER TABLE %I.%I VALIDATE CONSTRAINT %I;',
+         nsp.nspname,
+         rel.relname,
+         con.conname
+       )
+FROM pg_constraint con
+JOIN pg_class rel ON rel.oid = con.conrelid
+JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+WHERE con.contype = 'f'
+  AND nsp.nspname = 'public'
+ORDER BY rel.relname, con.conname;
+SQL
+
+  TARGET_FK_COUNT="$(grep -cve '^[[:space:]]*$' "$TARGET_FK_DROP_SQL" || true)"
+}
+
+drop_target_foreign_keys() {
+  if [ "$TARGET_FK_COUNT" -eq 0 ]; then
+    return
+  fi
+
+  echo "  Temporarily dropping $TARGET_FK_COUNT existing target foreign keys so pgloader can load dependent tables in parallel..."
+  psql_target -1 -f "$TARGET_FK_DROP_SQL" >/dev/null
+  TARGET_FKS_DROPPED=true
+}
+
+restore_target_foreign_keys() {
+  if [ "$TARGET_FK_COUNT" -eq 0 ]; then
+    return
+  fi
+
+  psql_target -1 -f "$TARGET_FK_RESTORE_SQL" >/dev/null
+  TARGET_FKS_DROPPED=false
+  psql_target -1 -f "$TARGET_FK_VALIDATE_SQL" >/dev/null
+}
+
+# Keep CamelCase identifiers and skip pgloader's sequence reset. pgloader's
+# reset query can break when identifiers are quoted (e.g. ""Id"").
+WITH_OPTIONS="include drop, create tables, create indexes, reset sequences, quote identifiers, preserve index names"
+
+# SQL Server index names are table-scoped, while PostgreSQL index names are
+# schema-scoped. Enable pgloader name uniquification only when needed.
+if [ "$UNIQUIFY_INDEX_NAMES" = true ]; then
+    WITH_OPTIONS="$WITH_OPTIONS, uniquify index names"
+fi
+
 if [ "$SCHEMA_ONLY" = true ]; then
-    INCLUDE_DATA="WITH no data, create tables, create indexes, reset sequences"
+    WITH_OPTIONS="$WITH_OPTIONS, schema only"
+fi
+
+# Ignore constraints created by EFCore, only focus on mapping the data into the correct table and colum names
+if [ "$DATA_ONLY" = true ]; then
+  WITH_OPTIONS="$WITH_OPTIONS, data only"
+fi
+
+# pgloader can emit invalid FK DDL for SQL Server schemas that reference
+# alternate/composite keys; keep FK creation opt-in for the BYO flow.
+if [ "$CREATE_FOREIGN_KEYS" = true ]; then
+    WITH_OPTIONS="$WITH_OPTIONS, foreign keys"
+else
+    WITH_OPTIONS="$WITH_OPTIONS, no foreign keys"
 fi
 
 # URL-encode the SQL Server password (pgloader connection URI safe)
 SQLSERVER_PASSWORD_ENC="$(printf '%s' "$SQLSERVER_PASSWORD" | sed -e 's/@/%40/g' -e 's/:/%3A/g' -e 's/\//%2F/g' -e 's/?/%3F/g' -e 's/#/%23/g' -e 's/!/%21/g')"
 PG_PASSWORD_ENC="$(printf '%s' "$PG_PASSWORD" | sed -e 's/@/%40/g' -e 's/:/%3A/g' -e 's/\//%2F/g' -e 's/?/%3F/g' -e 's/#/%23/g' -e 's/!/%21/g')"
 
+
 cat > "$PGLOADER_CONF" <<EOF
 LOAD DATABASE
      FROM mssql://$SQLSERVER_USER:$SQLSERVER_PASSWORD_ENC@$SQLSERVER_HOST:$SQLSERVER_PORT/$SQLSERVER_DB
      INTO postgresql://$PG_USER:$PG_PASSWORD_ENC@$PG_HOST:$PG_PORT/$PG_DB?sslmode=disable
+     ALTER SCHEMA 'dbo' RENAME TO 'public'
 
- WITH include drop, create tables, create indexes, reset sequences,
-      foreign keys, downcase identifiers, uniquify index names
+ WITH $WITH_OPTIONS
+
+$EXCLUDE_CLAUSE
 
  SET work_mem to '128MB',
      maintenance_work_mem to '512 MB',
@@ -136,16 +280,19 @@ LOAD DATABASE
 
  CAST type bit when (= 1 precision) to boolean drop typemod,
       type uniqueidentifier to uuid drop typemod,
+      type varchar to "character varying" keep typemod,
+      type nvarchar when (= precision 256) to "character varying" keep typemod,
       type nvarchar to text drop typemod,
-      type nchar to text drop typemod,
+      type nchar to "character varying" keep typemod,
       type datetime2 to timestamptz drop typemod,
       type datetimeoffset to timestamptz drop typemod,
       type money to numeric drop typemod,
       type smallmoney to numeric drop typemod,
       type tinyint to smallint drop typemod,
-      type hierarchyid to text drop typemod,
-      type geography to text drop typemod,
-      type geometry to text drop typemod
+      type hierarchyid to "character varying" drop typemod,
+      type geography to "character varying" drop typemod,
+      type geometry to "character varying" drop typemod,
+      type int with extra auto_increment to serial drop typemod
 ;
 EOF
 
@@ -160,19 +307,47 @@ if [ "$DRY_RUN" = true ]; then
     exit 0
 fi
 
-echo "[1/2] Running pgloader..."
+MANAGE_TARGET_FOREIGN_KEYS=false
+if [ "$SCHEMA_ONLY" = false ] && [ "$DATA_ONLY" = true ]; then
+    MANAGE_TARGET_FOREIGN_KEYS=true
+    prepare_target_foreign_keys
+fi
+
+TOTAL_STEPS=2
+if [ "$MANAGE_TARGET_FOREIGN_KEYS" = true ] && [ "$TARGET_FK_COUNT" -gt 0 ]; then
+    TOTAL_STEPS=3
+    drop_target_foreign_keys
+fi
+
+echo "[1/$TOTAL_STEPS] Running pgloader..."
 pgloader "$PGLOADER_CONF"
 
-echo ""
-echo "[2/2] Verifying target..."
-PGPASSWORD="$PG_PASSWORD" psql \
-    -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DB" \
-    -c "SELECT table_schema, COUNT(*) AS tables FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') GROUP BY table_schema ORDER BY table_schema;"
+CURRENT_STEP=1
+if [ "$MANAGE_TARGET_FOREIGN_KEYS" = true ] && [ "$TARGET_FK_COUNT" -gt 0 ]; then
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    echo "[$CURRENT_STEP/$TOTAL_STEPS] Restoring target foreign keys..."
+    restore_target_foreign_keys
+fi
+
+CURRENT_STEP=$((CURRENT_STEP + 1))
+echo "[$CURRENT_STEP/$TOTAL_STEPS] Verifying target..."
+psql_target -c "SELECT table_schema, COUNT(*) AS tables FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') GROUP BY table_schema ORDER BY table_schema;"
 
 echo ""
 echo "============================================="
 echo "  BYO Migration complete!"
 echo "============================================="
+echo ""
+if [ "$CREATE_FOREIGN_KEYS" = true ]; then
+    echo "  Foreign keys: requested via --with-foreign-keys"
+else
+    echo "  Foreign keys: skipped by default (safer for alternate/composite key schemas)"
+fi
+if [ "$UNIQUIFY_INDEX_NAMES" = true ]; then
+    echo "  Index names: pgloader uniquified (idx_<oid>_<source_name>)"
+else
+    echo "  Index names: restoring EF-style PK_/IX_ names (removes idx_<oid>_ prefix)"
+fi
 echo ""
 echo "  Next steps:"
 echo "    1. Run pgtap tests:         pg_prove -d \"postgresql://$PG_USER@$PG_HOST/$PG_DB\" tests/pgtap/t/"

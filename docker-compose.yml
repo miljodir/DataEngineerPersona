@@ -1,35 +1,55 @@
 services:
-  sqlserver:
-    image: mcr.microsoft.com/mssql/server:2025-latest
-    container_name: wwi-sqlserver
-    environment:
-      ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "${SA_PASSWORD}"
-      MSSQL_PID: Developer
-    ports:
-      - "1433:1433"
-    volumes:
-      - sqlserver-data:/var/opt/mssql
-      - ./data:/backup
-    healthcheck:
-      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "${SA_PASSWORD}" -C -Q "SELECT 1" -b
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
+  # sqlserver:
+  #   image: mcr.microsoft.com/mssql/server:2025-latest
+  #   container_name: wwi-sqlserver
+  #   environment:
+  #     ACCEPT_EULA: "Y"
+  #     MSSQL_SA_PASSWORD: "${SA_PASSWORD}"
+  #     MSSQL_PID: Developer
+  #   ports:
+  #     - "1433:1433"
+  #   volumes:
+  #     - sqlserver-data:/var/opt/mssql
+  #     - ./data:/backup
+  #   healthcheck:
+  #     test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "${SA_PASSWORD}" -C -Q "SELECT 1" -b
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 10
+  #     start_period: 30s
 
-  postgres:
+  postgres4:
     image: docker.io/postgis/postgis:18-3.6
-    container_name: postgres
+    container_name: postgres4
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "${PG_PASSWORD}"
+      POSTGRES_PASSWORD: "postgres"
     ports:
-      - "5432:5432"
+      - "54322:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql
-      - ./scripts/docker/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - postgres-data4:/var/lib/postgresql
+      - ./scripts/podman/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./data:/data
+    healthcheck:
+      test: pg_isready -U postgres -d postgres
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  postgres3:
+    image: docker.io/postgis/postgis:18-3.6
+    container_name: postgres3
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "postgres"
+    ports:
+      - "54321:5432"
+    volumes:
+      - postgres-data3:/var/lib/postgresql
+      - ./scripts/podman/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql
       - ./data:/data
     healthcheck:
       test: pg_isready -U postgres -d postgres
@@ -38,5 +58,5 @@ services:
       retries: 5
       start_period: 10s
 volumes:
-  sqlserver-data:
-  postgres-data:
+  postgres-data4:
+  postgres-data3:

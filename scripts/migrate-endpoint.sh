@@ -340,7 +340,7 @@ EOF
 # ------------------------------------------------------------------
 if [ "$DRY_RUN" = true ]; then
     echo "[1/2] pgloader dry-run (validation only)..."
-    pgloader --dry-run "$PGLOADER_CONF"
+    pgloader4 --dry-run "$PGLOADER_CONF"
     echo ""
     echo "Dry-run complete. Re-run without --dry-run to perform the migration."
     exit 0
@@ -367,7 +367,7 @@ if [ "$RUN_SEQUENCE_SYNC" = true ]; then
 fi
 
 echo "[1/$TOTAL_STEPS] Running pgloader..."
-pgloader "$PGLOADER_CONF"
+pgloader4 "$PGLOADER_CONF"
 
 CURRENT_STEP=1
 if [ "$MANAGE_TARGET_FOREIGN_KEYS" = true ] && [ "$TARGET_FK_COUNT" -gt 0 ]; then

@@ -8,7 +8,10 @@
 # For the WideWorldImporters local demo (podman), use migrate-data.sh instead.
 #
 # Connection strings come from .env. Required:
-#   SQLSERVER_HOST, SQLSERVER_PORT, SQLSERVER_DB, SQLSERVER_USER, SQLSERVER_PASSWORD
+#   SQLSERVER_HOST, SQLSERVER_PORT, SQLSERVER_DB
+#   SQLSERVER_AUTH_MODE=sql (default, needs SQLSERVER_USER/SQLSERVER_PASSWORD)
+#                       or aad (Azure AD interactive login; see
+#                       scripts/pgloader-aad/README.md for one-time setup)
 #   PGHOST,        PGPORT,        PGDATABASE,        PGUSER,        PGPASSWORD
 #
 # Usage:
@@ -77,18 +80,29 @@ fi
 : "${SQLSERVER_HOST:?SQLSERVER_HOST is required (set in .env)}"
 : "${SQLSERVER_PORT:=1433}"
 : "${SQLSERVER_DB:?SQLSERVER_DB is required (set in .env)}"
-: "${SQLSERVER_USER:=sa}"
-: "${SQLSERVER_PASSWORD:?SQLSERVER_PASSWORD is required (set in .env)}"
+
+# SQLSERVER_AUTH_MODE: "sql" (default, SQLSERVER_USER/PASSWORD) or "aad"
+# (Azure AD / Entra ID via `az login`, no password needed). See
+# scripts/pgloader-aad/README.md for the one-time setup "aad" requires.
+: "${SQLSERVER_AUTH_MODE:=aad}"
+case "$SQLSERVER_AUTH_MODE" in
+    sql|aad) ;;
+    *) echo "ERROR: SQLSERVER_AUTH_MODE must be 'sql' or 'aad' (got '$SQLSERVER_AUTH_MODE')" >&2; exit 1 ;;
+esac
+
+if [ "$SQLSERVER_AUTH_MODE" = "sql" ]; then
+    : "${SQLSERVER_USER:=sa}"
+    #: "${SQLSERVER_PASSWORD:?SQLSERVER_PASSWORD is required (set in .env)}"
+    # Map the common .env names (set by .env.example for the demo) to BYO names
+    # This lets demo defaults like SA_PASSWORD work when SQLSERVER_PASSWORD is unset.
+    SQLSERVER_PASSWORD="${SQLSERVER_PASSWORD:-${SA_PASSWORD:-}}"
+fi
 
 : "${PGHOST:?PGHOST is required (set in .env)}"
 : "${PGPORT:=5432}"
 : "${PGDATABASE:?PGDATABASE is required (set in .env)}"
 : "${PGUSER:?PGUSER is required (set in .env)}"
 : "${PGPASSWORD:?PGPASSWORD is required (set in .env)}"
-
-# Map the common .env names (set by .env.example for the demo) to BYO names
-# This lets demo defaults like SA_PASSWORD work when SQLSERVER_PASSWORD is unset.
-SQLSERVER_PASSWORD="${SQLSERVER_PASSWORD:-${SA_PASSWORD:-}}"
 
 
 EXCLUDE_CLAUSE=" EXCLUDING TABLE NAMES LIKE 'Language', '__EFMigrationsHistory' IN SCHEMA 'dbo'"
@@ -98,18 +112,17 @@ echo "============================================="
 echo "  SQL Server → PostgreSQL (BYO endpoint)"
 echo "============================================="
 echo ""
-echo "  Source: $SQLSERVER_USER@$SQLSERVER_HOST:$SQLSERVER_PORT/$SQLSERVER_DB"
+if [ "$SQLSERVER_AUTH_MODE" = "aad" ]; then
+    echo "  Source: (Azure AD auth)@$SQLSERVER_HOST:$SQLSERVER_PORT/$SQLSERVER_DB"
+else
+    echo "  Source: $SQLSERVER_USER@$SQLSERVER_HOST:$SQLSERVER_PORT/$SQLSERVER_DB"
+fi
 echo "  Target: $PGUSER@$PGHOST:$PGPORT/$PGDATABASE"
 echo ""
 
 # ------------------------------------------------------------------
 # Preflight: pgloader installed?
 # ------------------------------------------------------------------
-pgloader() {
-  podman run --rm --network=host -v /tmp:/tmp -e TDSDUMP=/tmp/pgloader/freetds.log -e TDSVER=8.0 -e TDS_MAX_CONN=100 --name pgloader -i \
-    docker.io/esbalo/pgloader:1.0.0 \
-    pgloader "$@"
-}
 
 psql_target() {
   PGPASSWORD="$PGPASSWORD" psql \
@@ -119,18 +132,28 @@ psql_target() {
     "$@"
 }
 
-if ! command -v pgloader >/dev/null 2>&1; then
+if ! command -v pgloader4 >/dev/null 2>&1; then
     cat >&2 <<EOF
-ERROR: pgloader not found.
+ERROR: pgloader4 not found on PATH.
 
-Install:
-  Ubuntu/Debian:  sudo apt-get install -y pgloader
-  macOS (brew):   brew install pgloader
-  Docs:           https://pgloader.io
+This script expects the native pgloader v4 binary (pgloader4). See
+scripts/pgloader-aad/README.md, or https://github.com/dimitri/pgloader
+for installation instructions.
 EOF
     exit 127
 fi
 
+if [ "$SQLSERVER_AUTH_MODE" = "aad" ]; then
+    if ! command -v az >/dev/null 2>&1; then
+        echo "ERROR: SQLSERVER_AUTH_MODE=aad requires the az CLI on PATH (used by" >&2
+        echo "       authentication=ActiveDirectoryDefault's AzureCliCredential fallback)." >&2
+        exit 127
+    fi
+    if ! az account show >/dev/null 2>&1; then
+        echo "ERROR: Not logged in to Azure CLI. Run: az login" >&2
+        exit 1
+    fi
+fi
 
 # ------------------------------------------------------------------
 # Generate pgloader config from template
@@ -232,9 +255,9 @@ restore_target_foreign_keys() {
   psql_target -1 -f "$TARGET_FK_VALIDATE_SQL" >/dev/null
 }
 
-# Keep CamelCase identifiers and skip pgloader's sequence reset. pgloader's
-# reset query can break when identifiers are quoted (e.g. ""Id"").
-WITH_OPTIONS="include drop, create tables, create indexes, reset sequences, quote identifiers, preserve index names"
+# Keep CamelCase identifiers. pgloader's reset query can break when identifiers
+# are quoted (e.g. ""Id""), so reseed explicitly after load.
+WITH_OPTIONS="include drop, create tables, create indexes, quote identifiers, preserve index names"
 
 # SQL Server index names are table-scoped, while PostgreSQL index names are
 # schema-scoped. Enable pgloader name uniquification only when needed.
@@ -253,20 +276,37 @@ fi
 
 # pgloader can emit invalid FK DDL for SQL Server schemas that reference
 # alternate/composite keys; keep FK creation opt-in for the BYO flow.
+# Note: pgloader v4 dropped the "no foreign keys" negation syntax — foreign
+# keys are opt-in, so we simply omit the clause to skip creating them.
 if [ "$CREATE_FOREIGN_KEYS" = true ]; then
     WITH_OPTIONS="$WITH_OPTIONS, foreign keys"
-else
-    WITH_OPTIONS="$WITH_OPTIONS, no foreign keys"
 fi
 
 # URL-encode the SQL Server password (pgloader connection URI safe)
-SQLSERVER_PASSWORD_ENC="$(printf '%s' "$SQLSERVER_PASSWORD" | sed -e 's/@/%40/g' -e 's/:/%3A/g' -e 's/\//%2F/g' -e 's/?/%3F/g' -e 's/#/%23/g' -e 's/!/%21/g')"
 PGPASSWORD_ENC="$(printf '%s' "$PGPASSWORD" | sed -e 's/@/%40/g' -e 's/:/%3A/g' -e 's/\//%2F/g' -e 's/?/%3F/g' -e 's/#/%23/g' -e 's/!/%21/g')"
 
+# The mssql:// URI scheme hardcodes ";encrypt=false" internally in pgloader
+# v4, which can conflict with Azure SQL's TLS requirements. Use the raw
+# jdbc:sqlserver:// form instead so the whole connection string (including
+# authentication=... for AAD) is passed through to the driver unchanged.
+if [ "$SQLSERVER_AUTH_MODE" = "aad" ]; then
+    # authentication=ActiveDirectoryDefault uses Azure Identity's
+    # DefaultAzureCredential chain, which falls back to AzureCliCredential
+    # (shells out to `az account get-access-token`, using your existing
+    # `az login` session) when no other credential is available. This works
+    # headlessly in WSL2 (no browser popup), unlike ActiveDirectoryInteractive
+    # which requires xdg-open to launch a browser and fails with
+    # "linux_xdg_open_failed" in WSL2. Requires the AAD jars from
+    # scripts/pgloader-aad/fetch-aad-libs.sh; see scripts/pgloader-aad/README.md.
+    SQLSERVER_FROM_URI="jdbc:sqlserver://$SQLSERVER_HOST:$SQLSERVER_PORT;databaseName=$SQLSERVER_DB;authentication=ActiveDirectoryDefault;encrypt=true;trustServerCertificate=false"
+else
+    SQLSERVER_PASSWORD_ENC="$(printf '%s' "$SQLSERVER_PASSWORD" | sed -e 's/@/%40/g' -e 's/:/%3A/g' -e 's/\//%2F/g' -e 's/?/%3F/g' -e 's/#/%23/g' -e 's/!/%21/g')"
+    SQLSERVER_FROM_URI="mssql://$SQLSERVER_USER:$SQLSERVER_PASSWORD_ENC@$SQLSERVER_HOST:$SQLSERVER_PORT/$SQLSERVER_DB"
+fi
 
 cat > "$PGLOADER_CONF" <<EOF
 LOAD DATABASE
-     FROM mssql://$SQLSERVER_USER:$SQLSERVER_PASSWORD_ENC@$SQLSERVER_HOST:$SQLSERVER_PORT/$SQLSERVER_DB
+     FROM $SQLSERVER_FROM_URI
      INTO postgresql://$PGUSER:$PGPASSWORD_ENC@$PGHOST:$PGPORT/$PGDATABASE?sslmode=disable
      ALTER SCHEMA 'dbo' RENAME TO 'public'
 
@@ -291,8 +331,7 @@ $EXCLUDE_CLAUSE
       type tinyint to smallint drop typemod,
       type hierarchyid to "character varying" drop typemod,
       type geography to "character varying" drop typemod,
-      type geometry to "character varying" drop typemod,
-      type int with extra auto_increment to serial drop typemod
+      type geometry to "character varying" drop typemod
 ;
 EOF
 
@@ -301,7 +340,7 @@ EOF
 # ------------------------------------------------------------------
 if [ "$DRY_RUN" = true ]; then
     echo "[1/2] pgloader dry-run (validation only)..."
-    pgloader --dry-run "$PGLOADER_CONF"
+    pgloader4 --dry-run "$PGLOADER_CONF"
     echo ""
     echo "Dry-run complete. Re-run without --dry-run to perform the migration."
     exit 0
@@ -313,20 +352,34 @@ if [ "$SCHEMA_ONLY" = false ] && [ "$DATA_ONLY" = true ]; then
     prepare_target_foreign_keys
 fi
 
+RUN_SEQUENCE_SYNC=false
+if [ "$SCHEMA_ONLY" = false ]; then
+    RUN_SEQUENCE_SYNC=true
+fi
+
 TOTAL_STEPS=2
 if [ "$MANAGE_TARGET_FOREIGN_KEYS" = true ] && [ "$TARGET_FK_COUNT" -gt 0 ]; then
-    TOTAL_STEPS=3
+    TOTAL_STEPS=$((TOTAL_STEPS + 1))
     drop_target_foreign_keys
+fi
+if [ "$RUN_SEQUENCE_SYNC" = true ]; then
+    TOTAL_STEPS=$((TOTAL_STEPS + 1))
 fi
 
 echo "[1/$TOTAL_STEPS] Running pgloader..."
-pgloader "$PGLOADER_CONF"
+pgloader4 "$PGLOADER_CONF"
 
 CURRENT_STEP=1
 if [ "$MANAGE_TARGET_FOREIGN_KEYS" = true ] && [ "$TARGET_FK_COUNT" -gt 0 ]; then
     CURRENT_STEP=$((CURRENT_STEP + 1))
     echo "[$CURRENT_STEP/$TOTAL_STEPS] Restoring target foreign keys..."
     restore_target_foreign_keys
+fi
+
+if [ "$RUN_SEQUENCE_SYNC" = true ]; then
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    echo "[$CURRENT_STEP/$TOTAL_STEPS] Synchronizing identity sequences..."
+    #sync_target_identity_sequences
 fi
 
 CURRENT_STEP=$((CURRENT_STEP + 1))

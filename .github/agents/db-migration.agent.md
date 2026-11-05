@@ -37,9 +37,9 @@ The agent supports two execution modes — pick automatically based on inputs.
 
 - Triggered by: connection details exist in `.env` and `sourcePath` is empty or omitted.
 - Source: `${SQLSERVER_HOST}:${SQLSERVER_PORT}/${SQLSERVER_DB}` from `.env`.
-- Target: `${PG_HOST}:${PG_PORT}/${PG_DB}` from `.env`.
+- Target: `${PGHOST}:${PGPORT}/${PGDATABASE}` from `.env`; optional `PGHOSTADDR`, `PGSSLMODE`, and `PGSSLROOTCERT` configure proxy routing and TLS.
 - Migrate: `wsl zsh -c "scripts/migrate-endpoint.sh"`
-- Required env: `SQLSERVER_{HOST,PORT,DB,USER,PASSWORD}`, `PG_{HOST,PORT,DB,USER,PASSWORD}`.
+- Required env: `SQLSERVER_{HOST,PORT,DB,USER,PASSWORD}`, `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`. `PGPASSWORD` is optional when the target proxy does not require one.
 
 In both modes the assessment, validation, security, and performance steps are identical. Only the data-transfer command differs.
 

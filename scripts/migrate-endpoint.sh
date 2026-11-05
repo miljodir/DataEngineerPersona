@@ -10,9 +10,9 @@
 # Connection strings come from .env. Required:
 #   SQLSERVER_HOST, SQLSERVER_PORT, SQLSERVER_DB
 #   SQLSERVER_AUTH_MODE=sql (default, needs SQLSERVER_USER/SQLSERVER_PASSWORD)
-#                       or aad (Azure AD interactive login; see
-#                       scripts/pgloader-aad/README.md for one-time setup)
-#   PGHOST,        PGPORT,        PGDATABASE,        PGUSER,        PGPASSWORD
+#                       or aad (reuse an Azure CLI login with local pgloader v4)
+#   PGHOST, PGPORT, PGDATABASE, PGUSER
+#   Optional: PGPASSWORD, PGHOSTADDR, PGSSLMODE, PGSSLROOTCERT
 #
 # Usage:
 #   wsl zsh -c "scripts/migrate-endpoint.sh"                     # full migration
@@ -25,10 +25,10 @@
 
 set -euo pipefail
 
-export SSL_CERT_FILE=/mnt/c/appl/repos/DataEngineerPersona/server-ca.pem
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/lib/pgloader-local.sh"
+source "$SCRIPT_DIR/lib/azure-cli.sh"
 
 # ------------------------------------------------------------------
 # Load .env
@@ -82,9 +82,8 @@ fi
 : "${SQLSERVER_DB:?SQLSERVER_DB is required (set in .env)}"
 
 # SQLSERVER_AUTH_MODE: "sql" (default, SQLSERVER_USER/PASSWORD) or "aad"
-# (Azure AD / Entra ID via `az login`, no password needed). See
-# scripts/pgloader-aad/README.md for the one-time setup "aad" requires.
-: "${SQLSERVER_AUTH_MODE:=aad}"
+# (Entra ID via an existing Azure CLI login, no SQL password needed).
+: "${SQLSERVER_AUTH_MODE:=sql}"
 case "$SQLSERVER_AUTH_MODE" in
     sql|aad) ;;
     *) echo "ERROR: SQLSERVER_AUTH_MODE must be 'sql' or 'aad' (got '$SQLSERVER_AUTH_MODE')" >&2; exit 1 ;;
@@ -102,8 +101,18 @@ fi
 : "${PGPORT:=5432}"
 : "${PGDATABASE:?PGDATABASE is required (set in .env)}"
 : "${PGUSER:?PGUSER is required (set in .env)}"
-: "${PGPASSWORD:?PGPASSWORD is required (set in .env)}"
+: "${PGPASSWORD:=}"
+: "${PGHOSTADDR:=}"
+: "${PGSSLMODE:=disable}"
+: "${PGSSLROOTCERT:=}"
+: "${PGLOADER_RUNTIME:=podman}"
+: "${PGLOADER_IMAGE:=ghcr.io/dimitri/pgloader-v4:latest}"
+export PGHOSTADDR PGSSLMODE PGSSLROOTCERT
 
+case "$PGLOADER_RUNTIME" in
+    podman|local) ;;
+    *) echo "ERROR: PGLOADER_RUNTIME must be 'podman' or 'local' (got '$PGLOADER_RUNTIME')" >&2; exit 1 ;;
+esac
 
 EXCLUDE_CLAUSE=" EXCLUDING TABLE NAMES LIKE 'Language', '__EFMigrationsHistory' IN SCHEMA 'dbo'"
 
@@ -120,45 +129,89 @@ fi
 echo "  Target: $PGUSER@$PGHOST:$PGPORT/$PGDATABASE"
 echo ""
 
+# Encode connection parameter values for pgloader's PostgreSQL URI.
+url_encode() {
+    local value="$1"
+    local encoded=""
+    local char
+    local i
+    local LC_ALL=C
+
+    for ((i = 0; i < ${#value}; i++)); do
+        char="${value:i:1}"
+        case "$char" in
+            [a-zA-Z0-9.~_-]) encoded+="$char" ;;
+            *) printf -v char '%%%02X' "'$char"; encoded+="$char" ;;
+        esac
+    done
+    printf '%s' "$encoded"
+}
+
 # ------------------------------------------------------------------
 # Preflight: pgloader installed?
 # ------------------------------------------------------------------
 
 psql_target() {
-  PGPASSWORD="$PGPASSWORD" psql \
-    -X \
-    -v ON_ERROR_STOP=1 \
-    -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
-    "$@"
+  local -a password_env=()
+  if [ -n "$PGPASSWORD" ]; then
+    password_env+=("PGPASSWORD=$PGPASSWORD")
+  fi
+  env -u PGPASSWORD "${password_env[@]}" psql \
+      -X \
+      -v ON_ERROR_STOP=1 \
+      -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+      "$@"
 }
 
-if ! command -v pgloader4 >/dev/null 2>&1; then
-    cat >&2 <<EOF
-ERROR: pgloader4 not found on PATH.
+run_pgloader() {
+    if [ "$PGLOADER_RUNTIME" = "local" ]; then
+        pgloader_local_run "$@"
+        return
+    fi
 
-This script expects the native pgloader v4 binary (pgloader4). See
-scripts/pgloader-aad/README.md, or https://github.com/dimitri/pgloader
-for installation instructions.
-EOF
+    if ! command -v podman >/dev/null 2>&1; then
+        echo "ERROR: Podman is required for the default PGLOADER_RUNTIME=podman." >&2
+        return 127
+    fi
+    if [ -n "$PGSSLROOTCERT" ] && [ ! -f "$PGSSLROOTCERT" ]; then
+        echo "ERROR: PGSSLROOTCERT does not point to a readable CA certificate file." >&2
+        return 1
+    fi
+
+    local -a podman_args=(
+        run --rm --network=host
+        --volume /tmp:/tmp
+        --env TDSVER=8.0
+        --env TDS_MAX_CONN=100
+        --env "TDSDUMP=$TMP_DIR/pgloader/freetds.log"
+    )
+    if [ -n "$PGHOSTADDR" ]; then
+        podman_args+=(--add-host "$PGHOST:$PGHOSTADDR")
+    fi
+    if [ -n "$PGSSLROOTCERT" ]; then
+        podman_args+=(--volume "$PGSSLROOTCERT:$PGSSLROOTCERT:ro")
+    fi
+
+    podman "${podman_args[@]}" "$PGLOADER_IMAGE" "$@"
+}
+
+if [ "$PGLOADER_RUNTIME" = "podman" ] && ! command -v podman >/dev/null 2>&1; then
+    echo "ERROR: Podman is required for the default PGLOADER_RUNTIME=podman." >&2
     exit 127
+elif [ "$PGLOADER_RUNTIME" = "local" ]; then
+    pgloader_local_check
 fi
 
-if [ "$SQLSERVER_AUTH_MODE" = "aad" ]; then
-    if ! command -v az >/dev/null 2>&1; then
-        echo "ERROR: SQLSERVER_AUTH_MODE=aad requires the az CLI on PATH (used by" >&2
-        echo "       authentication=ActiveDirectoryDefault's AzureCliCredential fallback)." >&2
-        exit 127
-    fi
-    if ! az account show >/dev/null 2>&1; then
-        echo "ERROR: Not logged in to Azure CLI. Run: az login" >&2
-        exit 1
-    fi
+if [ "$SQLSERVER_AUTH_MODE" = "aad" ] && [ "$PGLOADER_RUNTIME" = "podman" ]; then
+    echo "ERROR: SQLSERVER_AUTH_MODE=aad requires PGLOADER_RUNTIME=local to use Azure CLI." >&2
+    exit 1
 fi
 
 # ------------------------------------------------------------------
 # Generate pgloader config from template
 # ------------------------------------------------------------------
 TMP_DIR="$(mktemp -d)"
+mkdir -p "$TMP_DIR/pgloader"
 PGLOADER_CONF="$TMP_DIR/migration.load"
 TARGET_FK_DROP_SQL="$TMP_DIR/target-fks.drop.sql"
 TARGET_FK_RESTORE_SQL="$TMP_DIR/target-fks.restore.sql"
@@ -184,6 +237,13 @@ cleanup() {
 }
 
 trap cleanup EXIT
+
+if [ "$SQLSERVER_AUTH_MODE" = "aad" ]; then
+    configure_azure_cli "$TMP_DIR"
+fi
+if [ "$PGLOADER_RUNTIME" = "local" ]; then
+    pgloader_local_map_host "$TMP_DIR"
+fi
 
 prepare_target_foreign_keys() {
   psql_target -At <<'SQL' > "$TARGET_FK_DROP_SQL"
@@ -282,8 +342,14 @@ if [ "$CREATE_FOREIGN_KEYS" = true ]; then
     WITH_OPTIONS="$WITH_OPTIONS, foreign keys"
 fi
 
-# URL-encode the SQL Server password (pgloader connection URI safe)
-PGPASSWORD_ENC="$(printf '%s' "$PGPASSWORD" | sed -e 's/@/%40/g' -e 's/:/%3A/g' -e 's/\//%2F/g' -e 's/?/%3F/g' -e 's/#/%23/g' -e 's/!/%21/g')"
+# Build the JDBC target URL using PGHOST so TLS verifies the proxy's DNS name.
+PGLOADER_TARGET_PARAMS="user=$(url_encode "$PGUSER")&sslmode=$(url_encode "$PGSSLMODE")"
+if [ -n "$PGPASSWORD" ]; then
+    PGLOADER_TARGET_PARAMS="$PGLOADER_TARGET_PARAMS&password=$(url_encode "$PGPASSWORD")"
+fi
+if [ -n "$PGSSLROOTCERT" ]; then
+    PGLOADER_TARGET_PARAMS="$PGLOADER_TARGET_PARAMS&sslrootcert=$(url_encode "$PGSSLROOTCERT")"
+fi
 
 # The mssql:// URI scheme hardcodes ";encrypt=false" internally in pgloader
 # v4, which can conflict with Azure SQL's TLS requirements. Use the raw
@@ -294,10 +360,8 @@ if [ "$SQLSERVER_AUTH_MODE" = "aad" ]; then
     # DefaultAzureCredential chain, which falls back to AzureCliCredential
     # (shells out to `az account get-access-token`, using your existing
     # `az login` session) when no other credential is available. This works
-    # headlessly in WSL2 (no browser popup), unlike ActiveDirectoryInteractive
-    # which requires xdg-open to launch a browser and fails with
-    # "linux_xdg_open_failed" in WSL2. Requires the AAD jars from
-    # scripts/pgloader-aad/fetch-aad-libs.sh; see scripts/pgloader-aad/README.md.
+    # headlessly without an interactive browser. Other configured credentials
+    # in the DefaultAzureCredential chain can take precedence over Azure CLI.
     SQLSERVER_FROM_URI="jdbc:sqlserver://$SQLSERVER_HOST:$SQLSERVER_PORT;databaseName=$SQLSERVER_DB;authentication=ActiveDirectoryDefault;encrypt=true;trustServerCertificate=false"
 else
     SQLSERVER_PASSWORD_ENC="$(printf '%s' "$SQLSERVER_PASSWORD" | sed -e 's/@/%40/g' -e 's/:/%3A/g' -e 's/\//%2F/g' -e 's/?/%3F/g' -e 's/#/%23/g' -e 's/!/%21/g')"
@@ -307,7 +371,7 @@ fi
 cat > "$PGLOADER_CONF" <<EOF
 LOAD DATABASE
      FROM $SQLSERVER_FROM_URI
-     INTO postgresql://$PGUSER:$PGPASSWORD_ENC@$PGHOST:$PGPORT/$PGDATABASE?sslmode=disable
+     INTO jdbc:postgresql://$PGHOST:$PGPORT/$(url_encode "$PGDATABASE")?$PGLOADER_TARGET_PARAMS
      ALTER SCHEMA 'dbo' RENAME TO 'public'
 
  WITH $WITH_OPTIONS
@@ -340,7 +404,7 @@ EOF
 # ------------------------------------------------------------------
 if [ "$DRY_RUN" = true ]; then
     echo "[1/2] pgloader dry-run (validation only)..."
-    pgloader4 --dry-run "$PGLOADER_CONF"
+    run_pgloader --dry-run "$PGLOADER_CONF"
     echo ""
     echo "Dry-run complete. Re-run without --dry-run to perform the migration."
     exit 0
@@ -367,7 +431,7 @@ if [ "$RUN_SEQUENCE_SYNC" = true ]; then
 fi
 
 echo "[1/$TOTAL_STEPS] Running pgloader..."
-pgloader4 "$PGLOADER_CONF"
+run_pgloader "$PGLOADER_CONF"
 
 CURRENT_STEP=1
 if [ "$MANAGE_TARGET_FOREIGN_KEYS" = true ] && [ "$TARGET_FK_COUNT" -gt 0 ]; then

@@ -33,9 +33,13 @@ parse_conn_string() {
         value="${value#\'}"
 
         case "$key" in
-            host|hostaddr)
+            host)
                 export PGHOST="$value"
                 PGHOST="$value"
+                ;;
+            hostaddr)
+                export PGHOSTADDR="$value"
+                PGHOSTADDR="$value"
                 ;;
             port)
                 export PGPORT="$value"
@@ -56,6 +60,9 @@ parse_conn_string() {
                 ;;
             sslmode)
                 export PGSSLMODE="$value"
+                ;;
+            sslrootcert)
+                export PGSSLROOTCERT="$value"
                 ;;
         esac
     done
@@ -80,8 +87,20 @@ load_env() {
 }
 
 resolve_connection_variables() {
+    case "${SQLSERVER_AUTH_MODE:-sql}" in
+        sql) ;;
+        aad)
+            echo "ERROR: validate-migration.sh currently uses tsql and supports SQL authentication only." >&2
+            echo "       Azure CLI authentication is supported by migrate-endpoint.sh, not this validator." >&2
+            return 1
+            ;;
+        *)
+            echo "ERROR: SQLSERVER_AUTH_MODE must be 'sql' or 'aad'." >&2
+            return 1
+            ;;
+    esac
     SQLSERVER_PASSWORD="${SQLSERVER_PASSWORD:-${SA_PASSWORD:-}}"
-    PGPASSWORD="${PGPASSWORD:-${PGPASSWORD:-}}"
+    PGPASSWORD="${PGPASSWORD:-}"
 
     : "${SQLSERVER_HOST:?SQLSERVER_HOST is required (set in .env)}"
     : "${SQLSERVER_PORT:=1433}"
@@ -93,13 +112,21 @@ resolve_connection_variables() {
     : "${PGPORT:=5432}"
     : "${PGUSER:?PGUSER is required (set in .env)}"
     : "${PGDATABASE:=wide_world_importers}"
-    : "${PGPASSWORD:?PGPASSWORD is required (set in .env)}"
+    : "${PGPASSWORD:=}"
+    : "${PGHOSTADDR:=}"
+    : "${PGSSLMODE:=prefer}"
+    : "${PGSSLROOTCERT:=}"
+    export PGHOSTADDR PGSSLMODE PGSSLROOTCERT
 
     DATABASE="${DATABASE:-$PGDATABASE}"
 }
 
 psql_target() {
-    PGPASSWORD="$PGPASSWORD" psql \
+    local -a password_env=()
+    if [[ -n "$PGPASSWORD" ]]; then
+        password_env+=("PGPASSWORD=$PGPASSWORD")
+    fi
+    env -u PGPASSWORD "${password_env[@]}" psql \
         -X \
         -v ON_ERROR_STOP=1 \
         -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$DATABASE" \

@@ -1,4 +1,4 @@
--- pgLoader configuration for local Docker lab
+-- pgLoader v4 configuration for local Docker lab
 -- Credentials below match the defaults in .env.example / docker-compose.yml.
 -- For custom environments, use templates/pgloader-template.conf with your own values.
 

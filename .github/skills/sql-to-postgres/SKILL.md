@@ -133,13 +133,13 @@ Also run: `agentsec scan` on any SQL scripts in the source path.
 
 ### Phase 2: Migration Execution
 
-**Tools:** pgLoader, ora2pg, Copilot, sqlfluff, pgtap, PostgreSQL ext
+**Tools:** pgLoader v4 (Podman by default), ora2pg, Copilot, sqlfluff, pgtap, PostgreSQL ext
 **Output:** `docs/02-migration-execution.md`, `docs/schema-optimization-logic.md`
 
 **Step 2.1: pgLoader Dry Run**
 
 ```bash
-pgloader --dry-run pgloader.conf
+scripts/run-migration.sh --dry-run
 ```
 
 Validate type mappings. Cross-check with ora2pg schema conversion output.
@@ -147,7 +147,7 @@ Validate type mappings. Cross-check with ora2pg schema conversion output.
 **Step 2.2: Data Transfer**
 
 ```bash
-pgloader pgloader.conf
+scripts/run-migration.sh --execute
 ```
 
 pgLoader CAST rules for WideWorldImporters:

@@ -3,7 +3,7 @@
 name: db-migrate
 description: One-click SQL Server to PostgreSQL database migration. Works with WideWorldImporters demo OR any customer SQL Server endpoint. Multi-tool redundancy with 12 cross-validating tools.
 agent: db-migration
-argument-hint: "[sourcePath] e.g. samples/wide-world-importers OR leave blank to use SQLSERVER_* / PG_* from .env"
+argument-hint: "[sourcePath] e.g. samples/wide-world-importers OR leave blank to use SQLSERVER_* / PG* from .env"
 tools: ['read/readFile', 'search/codebase', 'search/fileSearch', 'search/textSearch', 'search/listDirectory', 'todo', 'agent', 'execute', 'edit', 'search']
 ---
 
@@ -15,7 +15,7 @@ Read the skill file `.github/skills/sql-to-postgres/SKILL.md` first - it is the 
 
 If `sourcePath` is provided and matches a folder under `samples/` → run **Demo mode** against the local Docker WideWorldImporters lab using `wsl zsh -c "scripts/migrate-data.sh"`.
 
-If `sourcePath` is empty (just `/db-migrate` with no argument) → run **BYO Endpoint mode** against the SQL Server and PostgreSQL defined in `.env` (`SQLSERVER_*` and `PG_*`) using `wsl zsh -c "scripts/migrate-endpoint.sh"`.
+If `sourcePath` is empty (just `/db-migrate` with no argument) → run **BYO Endpoint mode** against the SQL Server and PostgreSQL defined in `.env` (`SQLSERVER_*` and `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, plus optional `PGPASSWORD`, `PGHOSTADDR`, `PGSSLMODE`, and `PGSSLROOTCERT`) using `wsl zsh -c "scripts/migrate-endpoint.sh"`.
 
 Source path argument: `${input:sourcePath:samples/wide-world-importers}`
 

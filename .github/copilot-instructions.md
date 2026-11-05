@@ -55,7 +55,7 @@ wsl zsh -c "scripts/setup-local-env.sh"         # Start containers + restore .ba
 wsl zsh -c "scripts/migrate-data.sh"            # Schema + data + functions + row-count check
 
 # BYO endpoint: any customer SQL Server -> any PostgreSQL
-cp .env.example .env                    # Edit SQLSERVER_* and PG_* values
+cp .env.example .env                    # Edit SQLSERVER_* and PG* values
 wsl zsh -c "scripts/migrate-endpoint.sh"        # pgloader-based generic transfer
 
 # Manual phases

@@ -121,10 +121,10 @@ cp .env.example .env
 #   SQLSERVER_DB='ProductionDb'
 #   SQLSERVER_USER='migrate_user'
 #   SQLSERVER_PASSWORD='...'
-#   PG_HOST='mycorp-pg.postgres.database.azure.com'
-#   PG_DB='production_db'
-#   PG_USER='migrate_user'
-#   PG_PASSWORD='...'
+#   PGHOST='mycorp-pg.postgres.database.azure.com'
+#   PGDATABASE='production_db'
+#   PGUSER='migrate_user'
+#   PGPASSWORD='...'
 
 wsl zsh -c "scripts/migrate-endpoint.sh --dry-run"    # validate connectivity + type mappings
 wsl zsh -c "scripts/migrate-endpoint.sh"              # perform migration via pgloader
@@ -141,7 +141,39 @@ The same Copilot agent works on the customer endpoint:
 
 `migrate-endpoint.sh` skips pgloader-managed foreign keys by default. This avoids a common pgloader failure mode where SQL Server alternate/composite key relationships are emitted as invalid PostgreSQL FK DDL such as `ERROR 42830: there is no unique constraint matching given keys`. Only use `--with-foreign-keys` after confirming the referenced columns will exist in PostgreSQL as `PRIMARY KEY` or `UNIQUE` constraints, not just indexes.
 
-Required tools: `pgloader`, `psql`, `sqlcmd`. All three are pre-installed in the dev container.
+The default pgloader runtime requires Podman; `migrate-endpoint.sh` also uses `psql` for target operations. SQL-authenticated source validation uses `tsql`. See below for running pgloader locally with an Azure CLI login.
+
+### Azure SQL with a personal Azure CLI login
+
+pgloader v4 is a development release distributed as a self-contained JAR. Install Java 21 or later in the environment running the scripts, then download the [official v4 JAR](https://github.com/dimitri/pgloader/releases/tag/v4-dev):
+
+```bash
+mkdir -p "$HOME/.local/share/pgloader4"
+curl -fL https://github.com/dimitri/pgloader/releases/download/v4-dev/pgloader.jar \
+  -o "$HOME/.local/share/pgloader4/pgloader.jar"
+java -jar "$HOME/.local/share/pgloader4/pgloader.jar" --version
+```
+
+In your local, uncommitted `.env`, set `SQLSERVER_AUTH_MODE='aad'`, `PGLOADER_RUNTIME='local'`, and `PGLOADER_JAR="${HOME}/.local/share/pgloader4/pgloader.jar"`. An existing `pgloader4` executable on `PATH` can be used instead by leaving `PGLOADER_JAR` empty. Set the source host and database, and ensure the signed-in identity can read the Azure SQL database and its metadata. SQL username and password are not used in `aad` mode.
+
+Sign in with `az login` inside WSL (the environment running the script) before migrating. pgloader uses `ActiveDirectoryDefault`: other configured Azure credentials can take precedence over the Azure CLI login.
+
+`validate-migration.sh` currently uses `tsql` and does not support Azure CLI authentication; it exits with an explanation if `SQLSERVER_AUTH_MODE='aad'`.
+
+### Nais Postgres personal-access proxy
+
+For a Nais target, start the proxy and keep it running for the full migration and validation:
+
+```bash
+nais postgres proxy <POSTGRES-NAME> --team <TEAM> --environment <ENVIRONMENT> \
+  --access-level admin --reason "Migrating database schema and data"
+```
+
+Personal access defaults to read-only; `admin` is needed to create or alter schema objects. Set the target variables in your **local, uncommitted** `.env` from the proxy output: `PGHOST` to its TLS server name, `PGHOSTADDR` to its loopback listen address, `PGPORT`, `PGUSER`, `PGDATABASE` (usually `app`), and `PGSSLROOTCERT` to its CA certificate path. Set `PGSSLMODE=verify-full`. If the client needs a password, start the proxy with `--print-password` and set `PGPASSWORD` to the printed value; otherwise leave `PGPASSWORD` empty. Do not commit generated credentials, connection details, or local certificate paths.
+
+`PGHOSTADDR`, `PGSSLMODE`, and `PGSSLROOTCERT` are also used by `validate-migration.sh`; the default `PGSSLMODE=disable` keeps the existing local/Clock SQL proxy flow unchanged.
+
+For local pgloader on Linux or WSL, install `libnss-wrapper` (for example, `sudo apt-get install libnss-wrapper` on Debian/Ubuntu). The script uses it only for pgloader to map the proxy's TLS name to `PGHOSTADDR`, without changing system DNS or disabling hostname verification. If the library is installed in a nonstandard location, set `PGLOADER_NSS_WRAPPER` to its full path. The proxy address and certificate path must be reachable from the environment running the scripts.
 
 ---
 
@@ -304,19 +336,9 @@ This project may contain trademarks or logos for projects, products, or services
 
 ## Customizations
 
-### Support for Azure SQL
+### pgloader v4 container
 
-Updated to work on source: Azure SQL (with sql auth). Requires podman installed for pgloader with this function set:
-
-```bash
-pgloader() {
-  podman run --rm --network=host -v /tmp:/tmp -e TDSDUMP=/tmp/pgloader/freetds.log -e TDSVER=8.0 --name pgloader -i \
-    docker.io/esbalo/pgloader:1.0.0 \
-    pgloader "$@"
-}
-```
-
-the image is specifically created to support Azure SQL. See github issue https://github.com/dimitri/pgloader/issues/1324#issuecomment-2059357214
+Both `scripts/migrate-endpoint.sh` and `scripts/run-migration.sh` use the official pgloader v4 container through Podman by default. The endpoint script shares its temporary load configuration with the container and uses host networking; when `PGHOSTADDR` is set, Podman maps that address to `PGHOST` so PostgreSQL TLS verification uses the proxy's server name. Set `PGLOADER_RUNTIME=local` to use a pgloader v4 JAR or an installed `pgloader4` executable instead. `SQLSERVER_AUTH_MODE=aad` requires the local runtime, as described above.
 
 ### Support for target GCP Cloud SQL for PostgreSQL:
 
